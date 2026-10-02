@@ -7,6 +7,7 @@
 <style>
   :root { --navy: #14338C; --blue: #1A4DB3; --line: #E3E6EC; --sec: #6B7280; --bg: #F2F3F6; --green: #12A647; --red: #E62E2E; }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: #111; font: 16px/1.45 -apple-system, Helvetica, Arial, sans-serif; }
   header { background: var(--navy); color: #fff; padding: 22px 20px 18px; }
   header h1 { margin: 0 auto; max-width: 720px; font-size: 28px; letter-spacing: .5px; }
@@ -21,8 +22,8 @@
   label.toggle { display: flex; justify-content: space-between; align-items: center; }
   input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--blue); }
   #dateRow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
-  #dateRow label { font-size: 13px; color: var(--sec); }
-  input[type=date] { width: 100%; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #111; margin-top: 4px; }
+  #dateRow label { font-size: 13px; color: var(--sec); min-width: 0; }
+  input[type=date] { display: block; min-width: 0; -webkit-appearance: none; appearance: none; min-height: 40px; width: 100%; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #111; margin-top: 4px; }
   .count { grid-column: 1 / -1; font-size: 13px; font-weight: 600; margin: 2px 0 0; }
   .count.ok { color: var(--blue); }
   #go { width: 100%; margin-top: 12px; padding: 14px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-family: inherit; font-weight: 600; font-size: 17px; cursor: pointer; }
@@ -31,9 +32,15 @@
   #bar { height: 100%; width: 0; background: var(--blue); }
   #ptext { font-size: 13px; color: var(--sec); margin: 8px 0 0; }
   #errors { font-size: 13px; color: var(--red); margin: 8px 0 0; }
-  #downloads { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-  #downloads a { text-align: center; text-decoration: none; padding: 12px; border-radius: 8px; font-weight: 600; font-size: 15px; }
-  .dl { background: var(--blue); color: #fff; } .view { border: 1px solid var(--blue); color: var(--blue); }
+  #downloads { display: flex; flex-direction: column; margin: 8px 0 12px; }
+  .pdfrow { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .pdfrow .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .pdfrow .meta b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pdfrow .meta span { font-size: 13px; color: var(--sec); }
+  .pdfrow button { font: 600 15px -apple-system, Helvetica, Arial, sans-serif; padding: 9px 16px; border-radius: 8px; cursor: pointer; }
+  .view { background: #fff; border: 1px solid var(--blue); color: var(--blue); }
+  .dl { background: var(--blue); border: 1px solid var(--blue); color: #fff; }
+  .link { background: none; border: 0; padding: 0; color: var(--red); font-size: 14px; text-decoration: underline; cursor: pointer; }
   .split { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 15px; }
   .split label { display: flex; align-items: center; gap: 8px; }
   .split input[type=radio] { width: 20px; height: 20px; accent-color: var(--blue); margin: 0; }
@@ -73,8 +80,14 @@
       <div class="track"><div id="bar"></div></div>
       <p id="ptext"></p>
       <p id="errors" hidden></p>
-      <div id="downloads"></div>
     </div>
+  </section>
+
+  <section class="card" id="saved" hidden>
+    <h2>Your PDFs</h2>
+    <p class="small">Saved in this browser. They stay here after going back or reloading, until you generate again.</p>
+    <div id="downloads"></div>
+    <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
