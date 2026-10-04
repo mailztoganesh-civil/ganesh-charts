@@ -90,6 +90,9 @@
   .cwbar b { flex: 1; min-width: 0; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cwbar span { font-size: 13px; opacity: .85; white-space: nowrap; }
   .cwbar button { font: 600 15px -apple-system, Helvetica, Arial, sans-serif; padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.6); background: transparent; color: #fff; cursor: pointer; white-space: nowrap; }
+  @media (max-width: 520px) { .cwbar .wide { display: none; } .cwbar button { padding: 8px 11px; } .cwbar { gap: 6px; } }
+  .cwbar button.star { border-color: #FFD54F; color: #FFD54F; }
+  .cwbar button.star[aria-pressed=true] { background: #FFD54F; color: var(--navy); }
   .cwbar button.solid { background: #fff; color: var(--navy); border-color: #fff; }
   .cwbar button:disabled { opacity: .4; }
   #cwBody { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px calc(24px + env(safe-area-inset-bottom)); max-width: 900px; width: 100%; margin: 0 auto; }
@@ -467,15 +470,16 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 28 · automatic watchlist sync</p>
+  <p class="small" style="text-align:center">Version 30 · add to lists from chart window</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
     <button type="button" id="cwClose">Close</button>
     <b><span id="cwTitle"></span> <small id="cwList"></small></b>
     <span id="cwPos"></span>
-    <button type="button" id="cwPrev" aria-label="Previous stock">‹ Prev</button>
-    <button type="button" id="cwNext" class="solid" aria-label="Next stock">Next ›</button>
+    <button type="button" id="cwStar" class="star" aria-pressed="false">☆ Add</button>
+    <button type="button" id="cwPrev" aria-label="Previous stock">‹<span class="wide"> Prev</span></button>
+    <button type="button" id="cwNext" class="solid" aria-label="Next stock"><span class="wide">Next </span>›</button>
   </div>
   <div id="cwBody">
     <div class="cwfresh"><span id="cwFresh"></span><button type="button" class="wbtn" id="cwRefresh">↻ Refresh</button></div>
@@ -520,8 +524,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=28"></script>
-<script src="app.js?v=28"></script>
+<script src="symbols.js?v=30"></script>
+<script src="app.js?v=30"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

@@ -1114,6 +1114,8 @@ function manageInfo(w) {
   return { ...base, code: "hold", label: `${r >= 0 ? "+" : ""}${r.toFixed(1)}R \u00B7 holding`, cls: "mhold" };
 }
 
+// once a trade is risk-free the working stop is the entry price
+function effStop(mi) { return mi.code === "trail" || mi.code === "partial" ? Math.max(mi.stop, mi.entry) : mi.stop; }
 function mgmtStyle() { try { return localStorage.getItem("gc:mgmt") || "manas"; } catch { return "manas"; } }
 
 /* VCPSwing playbook: breakeven at ~3R, sell 1/3 at 5R, trail the 20 MA, switch to the 10 MA
@@ -1165,7 +1167,7 @@ function openPicker(cfg) {
   renderPicker();
   $("pick").hidden = false;
 }
-function closePicker() { $("pick").hidden = true; pickCfg = null; updateStar(); renderWatch(); }
+function closePicker() { $("pick").hidden = true; pickCfg = null; updateStar(); updateCwStar(); renderWatch(); }
 function renderPicker() {
   const box = $("pickList");
   box.innerHTML = "";
@@ -1645,6 +1647,9 @@ async function showChartAt(i, force) {
   const sym = order[cwIndex];
   if (cwSrc && cwSrc.kind === "vcp") return showVcpAt(sym, n, force);
   const w = cwSrc ? cwSrc.item(sym) : (activeList().items.find(x => x.symbol === sym) || { symbol: sym });
+  const lp0 = livePrice[sym];
+  cwItem = w.price ? { ...w } : { symbol: sym, addedOn: ymd(new Date()), price: lp0 ? lp0.close : null, priceDate: lp0 ? lp0.date : ymd(new Date()), note: "" };
+  updateCwStar();
   const token = ++cwToken;
   $("cwTitle").textContent = sym;
   $("cwList").textContent = cwSrc ? cwSrc.name : activeList().name;
@@ -1664,7 +1669,7 @@ async function showChartAt(i, force) {
   add("Added", `${fmtD(w.priceDate || w.addedOn)}${w.price ? ` \u00B7 \u20B9${w.price.toFixed(2)}` : ""}`);
   add("Now", lp ? `\u20B9${lp.close.toFixed(2)}` : "\u2026");
   const miw = manageInfo(w);
-  if (miw) add("Manage", `${miw.label} \u00B7 stop \u20B9${miw.stop.toFixed(2)}`, miw.code === "stop" || miw.code === "cost" ? "down" : miw.code === "hold" || miw.code === "new" ? "" : "up");
+  if (miw) add("Manage", `${miw.label} \u00B7 stop \u20B9${effStop(miw).toFixed(2)}`, miw.code === "stop" || miw.code === "cost" ? "down" : miw.code === "hold" || miw.code === "new" ? "" : "up");
   if (chg !== null) add("Change", `${chg >= 0 ? "+" : ""}${chg.toFixed(2)}% \u00B7 ${daysBetween(w.priceDate || w.addedOn, lp.date)}d`, chg >= 0 ? "up" : "down");
   $("cwNote").textContent = w.note ? `Note: ${w.note}` : "";
   $("cwStatus").textContent = "Loading chart\u2026";
@@ -1679,10 +1684,14 @@ async function showChartAt(i, force) {
   const lp2 = livePrice[sym];
   if (lp2 && w.price) {
     const c2 = (lp2.close - w.price) / w.price * 100;
-    const items = $("cwInfo").children;
-    if (items[1]) items[1].querySelector("b").textContent = `\u20B9${lp2.close.toFixed(2)}`;
-    if (items[2]) { const b = items[2].querySelector("b"); b.textContent = `${c2 >= 0 ? "+" : ""}${c2.toFixed(2)}% \u00B7 ${daysBetween(w.priceDate || w.addedOn, lp2.date)}d`; b.className = c2 >= 0 ? "up" : "down"; }
-    else add("Change", `${c2 >= 0 ? "+" : ""}${c2.toFixed(2)}% \u00B7 ${daysBetween(w.priceDate || w.addedOn, lp2.date)}d`, c2 >= 0 ? "up" : "down");
+    const cell = label => [...$("cwInfo").children].find(d => d.querySelector("small") && d.querySelector("small").textContent === label);
+    const nowC = cell("Now"); if (nowC) nowC.querySelector("b").textContent = `\u20B9${lp2.close.toFixed(2)}`;
+    const chTxt = `${c2 >= 0 ? "+" : ""}${c2.toFixed(2)}% \u00B7 ${daysBetween(w.priceDate || w.addedOn, lp2.date)}d`;
+    const chC = cell("Change");
+    if (chC) { const b = chC.querySelector("b"); b.textContent = chTxt; b.className = c2 >= 0 ? "up" : "down"; }
+    else add("Change", chTxt, c2 >= 0 ? "up" : "down");
+    const mi2 = manageInfo(w), mC = cell("Manage");
+    if (mi2 && mC) mC.querySelector("b").textContent = `${mi2.label} \u00B7 stop \u20B9${effStop(mi2).toFixed(2)}`;
   }
   const mark = { price: w.price, date: w.priceDate || w.addedOn };
   for (const [id, iv, c, bars] of [["cwDaily", "D", data.d, dailyBars()], ["cwWeekly", "W", data.w, weeklyBars()]]) {
@@ -1696,9 +1705,32 @@ async function showChartAt(i, force) {
   [1, -1].forEach(k => { const s2 = order[(cwIndex + k + n) % n]; if (s2 && s2 !== sym) getCharts(s2).catch(() => {}); });
 }
 
+/* "☆ Lists" in the chart window: add / remove the stock on any watchlist */
+let cwItem = null;
+function updateCwStar() {
+  const b = $("cwStar");
+  if (!b || !cwItem) return;
+  const ls = listsWith(cwItem.symbol);
+  b.innerHTML = "";
+  b.append(ls.length ? `\u2605 ${ls.length}` : "\u2606");
+  const wide = document.createElement("span"); wide.className = "wide";
+  wide.textContent = ls.length ? (ls.length === 1 ? ` ${ls[0].name}` : " lists") : " Add";
+  b.appendChild(wide);
+  b.title = ls.length ? `In: ${ls.map(l => l.name).join(", ")}` : "Add to a watchlist";
+  b.setAttribute("aria-label", ls.length ? `In ${ls.length} watchlist${ls.length > 1 ? "s" : ""}: ${ls.map(l => l.name).join(", ")}. Change` : "Add to a watchlist");
+  b.setAttribute("aria-pressed", String(ls.length > 0));
+}
+$("cwStar").onclick = () => {
+  if (!cwItem) return;
+  const { addedTs, editedTs, ...base } = cwItem;
+  openPicker({ title: `Add ${cwItem.symbol} to\u2026`, mode: "toggle", item: base });
+};
+
 /* VCP result in the chart window: pivot line + contraction details */
 async function showVcpAt(sym, n, force) {
   const r = cwSrc.item(sym);
+  cwItem = scanItem({ ...r, symbol: sym });
+  updateCwStar();
   const token = ++cwToken;
   $("cwTitle").textContent = sym;
   $("cwList").textContent = cwSrc.name;
@@ -2605,13 +2637,7 @@ $("vPdf").onclick = () => {
   $("step3").scrollIntoView({ behavior: "smooth", block: "start" });
   generate(syms);
 };
-$("vWatch").onclick = () => {
-  const res = vcp.results;
-  openPicker({
-    title: `Add ${res.length} VCP stock${res.length > 1 ? "s" : ""} to\u2026`, mode: "target", exclude: null,
-    onTarget: dest => {
-      let n = 0;
-      for (const r of res) {
+function scanItem(r) {
         const note = r.mode === "flag"
           ? `Flag (pole +${r.pole}%, ${r.flagDays}d): buy above \u20B9${r.trigger.toFixed(2)}, stop ${r.stopType} \u20B9${r.sl.toFixed(2)}`
           : r.mode === "manas"
@@ -2626,7 +2652,16 @@ $("vWatch").onclick = () => {
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
         const plan = r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
-        if (addToList(dest, { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan })) n++;
+        return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
+}
+$("vWatch").onclick = () => {
+  const res = vcp.results;
+  openPicker({
+    title: `Add ${res.length} VCP stock${res.length > 1 ? "s" : ""} to\u2026`, mode: "target", exclude: null,
+    onTarget: dest => {
+      let n = 0;
+      for (const r of res) {
+        if (addToList(dest, scanItem(r))) n++;
       }
       wlSave(); refreshPrices(res.map(r => r.symbol));
       toast(`Added ${n} to ${dest.name}${res.length - n ? ` (${res.length - n} already there)` : ""}`);
