@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Ganesh Charts</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<meta name="theme-color" content="#14338C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ganesh Charts">
+<style>
+  :root { --navy: #14338C; --blue: #1A4DB3; --line: #E3E6EC; --sec: #6B7280; --bg: #F2F3F6; --green: #12A647; --red: #E62E2E; }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: #111; font: 16px/1.45 -apple-system, Helvetica, Arial, sans-serif; }
+  header { background: var(--navy); color: #fff; padding: calc(22px + env(safe-area-inset-top)) 20px 18px; }
+  header h1 { margin: 0 auto; max-width: 720px; font-size: 28px; letter-spacing: .5px; }
+  main { max-width: 720px; margin: 0 auto; padding: 18px 16px 48px; }
+  .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+  h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--sec); }
+  .file { position: relative; display: block; color: var(--blue); font-weight: 600; padding: 4px 0; }
+  .file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .ok { color: var(--green); } .err, .none { color: var(--red); }
+  .small { font-size: 13px; color: var(--sec); margin: 4px 0 0; }
+  #found { margin: 10px 0 0; font-weight: 600; }
+  label.toggle { display: flex; justify-content: space-between; align-items: center; }
+  input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--blue); }
+  #dateRow { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  #dateRow label { font-size: 13px; color: var(--sec); min-width: 0; }
+  input[type=date] { display: block; min-width: 0; -webkit-appearance: none; appearance: none; min-height: 40px; width: 100%; font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #111; margin-top: 4px; }
+  .count { grid-column: 1 / -1; font-size: 13px; font-weight: 600; margin: 2px 0 0; }
+  .count.ok { color: var(--blue); }
+  #go { width: 100%; margin-top: 12px; padding: 14px; border: 0; border-radius: 8px; background: var(--blue); color: #fff; font-family: inherit; font-weight: 600; font-size: 17px; cursor: pointer; }
+  #go:disabled { background: #A9B9DE; cursor: default; }
+  .track { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: var(--blue); }
+  #ptext { font-size: 13px; color: var(--sec); margin: 8px 0 0; }
+  #errors { font-size: 13px; color: var(--red); margin: 8px 0 0; }
+  #downloads { display: flex; flex-direction: column; margin: 8px 0 12px; }
+  .pdfrow { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .pdfrow .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .pdfrow .meta b { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pdfrow .meta span { font-size: 13px; color: var(--sec); }
+  .pdfrow button { font: 600 15px -apple-system, Helvetica, Arial, sans-serif; padding: 9px 16px; border-radius: 8px; cursor: pointer; }
+  .view { background: #fff; border: 1px solid var(--blue); color: var(--blue); }
+  .dl { background: var(--blue); border: 1px solid var(--blue); color: #fff; }
+  .link { background: none; border: 0; padding: 0; color: var(--red); font-size: 14px; text-decoration: underline; cursor: pointer; }
+  .split { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 15px; }
+  .split label { display: flex; align-items: center; gap: 8px; }
+  .split input[type=radio] { width: 20px; height: 20px; accent-color: var(--blue); margin: 0; }
+  #splitN { width: 72px; font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .len { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 14px 0 4px; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  @media (max-width: 520px) { .len { grid-template-columns: 1fr; } }
+  .len label { display: block; font-size: 13px; font-weight: 600; color: var(--sec); margin-bottom: 6px; }
+  .lenrow { display: flex; align-items: center; gap: 6px; font-size: 15px; }
+  .lenrow input { width: 76px; font: inherit; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .lenrow em { font-style: normal; font-size: 13px; color: var(--sec); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chips button { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 4px 11px; font: 13px -apple-system, Helvetica, Arial, sans-serif; color: #111; cursor: pointer; }
+  .chips button[aria-pressed=true] { background: var(--navy); border-color: var(--navy); color: #fff; }
+  .pdbox { border-bottom: 1px solid var(--line); padding: 10px 0 12px; margin-bottom: 4px; }
+  .pdon { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
+  .pdon input { width: 20px; height: 20px; accent-color: rgb(147,51,234); }
+  .pddot { width: 10px; height: 10px; border-radius: 50%; background: rgb(147,51,234); display: inline-block; }
+  .pdopts { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; font-size: 14px; }
+  .pdopts label { display: flex; align-items: center; gap: 5px; }
+  .pdopts input { width: 58px; font: 14px -apple-system, Helvetica, Arial, sans-serif; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); border-radius: 9px; padding: 3px; margin-bottom: 14px; }
+  .tabs button { border: 0; background: transparent; padding: 9px; border-radius: 7px; font: 600 15px -apple-system, Helvetica, Arial, sans-serif; color: var(--sec); cursor: pointer; }
+  .tabs button[aria-selected=true] { background: #fff; color: var(--navy); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .letters { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px; }
+  .letters button { aspect-ratio: 1; border: 1px solid var(--line); background: #fff; border-radius: 8px; font: 600 17px -apple-system, Helvetica, Arial, sans-serif; color: #111; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; }
+  .letters button small { font-size: 10px; font-weight: 400; color: var(--sec); }
+  .letters button[aria-pressed=true] { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .letters button[aria-pressed=true] small { color: rgba(255,255,255,.8); }
+  .lrow { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+  .link2 { background: none; border: 0; padding: 0; color: var(--blue); font-size: 14px; text-decoration: underline; cursor: pointer; }
+  #viewer .bar button.star { border-color: #FFD54F; color: #FFD54F; }
+  #viewer .bar button.star[aria-pressed=true] { background: #FFD54F; color: var(--navy); }
+  #viewer .bar button.star:disabled { opacity: .4; }
+  #toast { position: fixed; z-index: 60; left: 50%; bottom: calc(28px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: rgba(17,17,17,.88); color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 15px; max-width: 90vw; text-align: center; }
+  .wrow { cursor: pointer; }
+  .wrow:active { background: var(--bg); }
+  #chartWin { position: fixed; inset: 0; z-index: 55; background: var(--bg); display: flex; flex-direction: column; }
+  .cwbar { display: flex; align-items: center; gap: 8px; background: var(--navy); color: #fff; padding: calc(10px + env(safe-area-inset-top)) 12px 10px; }
+  .cwbar b { flex: 1; min-width: 0; font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cwbar span { font-size: 13px; opacity: .85; white-space: nowrap; }
+  .cwbar button { font: 600 15px -apple-system, Helvetica, Arial, sans-serif; padding: 8px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.6); background: transparent; color: #fff; cursor: pointer; white-space: nowrap; }
+  .cwbar button.solid { background: #fff; color: var(--navy); border-color: #fff; }
+  .cwbar button:disabled { opacity: .4; }
+  #cwBody { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px calc(24px + env(safe-area-inset-bottom)); max-width: 900px; width: 100%; margin: 0 auto; }
+  #cwInfo { display: flex; flex-wrap: wrap; gap: 8px 22px; background: #fff; border-radius: 10px; padding: 10px 14px; }
+  #cwInfo div { display: flex; flex-direction: column; }
+  #cwInfo small { font-size: 11px; color: var(--sec); }
+  #cwInfo b { font-size: 15px; }
+  #cwInfo b.up { color: var(--green); } #cwInfo b.down { color: var(--red); }
+  #cwNote { margin: 8px 2px 0; font-size: 14px; color: #333; }
+  #cwNote:empty { display: none; }
+  #cwStatus { margin: 10px 2px 0; font-size: 14px; color: var(--sec); }
+  .cwlab { margin: 14px 2px 6px; font-size: 12px; font-weight: 700; color: var(--blue); letter-spacing: .5px; }
+  #chartWin canvas { display: block; width: 100%; height: auto; background: #fff; border-radius: 8px; }
+  .cwhint { text-align: center; margin-top: 12px; }
+  .wtabs { display: flex; gap: 6px; overflow-x: auto; padding: 8px 0 4px; -webkit-overflow-scrolling: touch; }
+  .wtabs button { flex: none; border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 6px 12px; font: 600 14px -apple-system, Helvetica, Arial, sans-serif; color: #111; cursor: pointer; display: flex; gap: 6px; align-items: center; }
+  .wtabs button small { font-weight: 400; font-size: 12px; color: var(--sec); }
+  .wtabs button[aria-selected=true] { background: var(--navy); border-color: var(--navy); color: #fff; }
+  .wtabs button[aria-selected=true] small { color: rgba(255,255,255,.8); }
+  .wtabs .addlist { border-style: dashed; color: var(--blue); }
+  .wtools { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; }
+  .link2.red { color: var(--red); }
+  .wselbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--bg); border-radius: 8px; padding: 8px 10px; margin-bottom: 4px; font-size: 14px; }
+  .wselbar #wSelCount { flex: 1; color: var(--sec); }
+  .wbtn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .wbtn:disabled { opacity: .45; }
+  .wchk { display: none; width: 22px; height: 22px; border: 2px solid var(--line); border-radius: 6px; flex: none; }
+  .wrow.selecting { grid-template-columns: 26px minmax(80px, 1.4fr) 1.3fr 1fr 0.9fr; }
+  .wrow.selecting .wchk { display: block; }
+  .wrow.selecting .wact { display: none; }
+  .wrow.picked { background: #EEF3FF; }
+  .wrow.picked .wchk { background: var(--blue); border-color: var(--blue); box-shadow: inset 0 0 0 3px #fff; }
+  @media (max-width: 560px) { .wrow.selecting { grid-template-columns: 26px 1fr 1fr auto; } }
+  #pick { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; justify-content: center; }
+  #pick .sheet { background: #fff; width: 100%; max-width: 560px; border-radius: 14px 14px 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); max-height: 80vh; overflow-y: auto; }
+  @media (min-width: 700px) { #pick { align-items: center; } #pick .sheet { border-radius: 14px; } }
+  .shead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .shead b { font-size: 16px; }
+  .pickrow { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: #fff; border: 0; border-bottom: 1px solid var(--line); padding: 13px 4px; font: 16px -apple-system, Helvetica, Arial, sans-serif; color: #111; cursor: pointer; }
+  .pickrow .tick { width: 22px; color: var(--blue); font-size: 18px; }
+  .pickrow[aria-pressed=true] .tick { color: #E0A800; }
+  .pickrow .pname { flex: 1; }
+  .pickrow .pcount { color: var(--sec); font-size: 13px; }
+  .pnew { display: flex; gap: 8px; margin-top: 12px; }
+  .pnew input { flex: 1; min-width: 0; font: 15px -apple-system, Helvetica, Arial, sans-serif; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; }
+  .cwbar b small { font-size: 12px; font-weight: 400; opacity: .8; }
+  .wsync { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .wsync span:last-child { display: flex; gap: 6px; }
+  .cwfresh { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; color: var(--sec); }
+  .vlab { display: block; font-size: 13px; font-weight: 600; color: var(--sec); margin: 8px 0 4px; }
+  #vUniverse { width: 100%; font: 15px -apple-system, Helvetica, Arial, sans-serif; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #111; }
+  .vset { margin-top: 10px; font-size: 14px; }
+  .vset summary { cursor: pointer; color: var(--blue); font-weight: 600; }
+  .vgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-top: 10px; }
+  @media (max-width: 560px) { .vgrid { grid-template-columns: 1fr; } }
+  .vgrid label { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; }
+  .vgrid input[type=number] { width: 64px; font: 14px -apple-system, Helvetica, Arial, sans-serif; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; }
+  .vgrid select { font: 14px -apple-system, Helvetica, Arial, sans-serif; padding: 5px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+  .vgrid input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--blue); }
+  .vbtn { width: 100%; margin-top: 12px; padding: 13px; border: 0; border-radius: 8px; background: var(--navy); color: #fff; font: 600 16px -apple-system, Helvetica, Arial, sans-serif; cursor: pointer; }
+  #vProg { margin-top: 12px; }
+  #vBar { height: 100%; width: 0; background: var(--navy); }
+  #vSummary { margin-top: 12px; }
+  #vSummary:empty { display: none; }
+  .vrow { display: grid; grid-template-columns: minmax(90px, 1.2fr) 1.6fr 1.3fr 1fr 0.8fr; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 14px; cursor: pointer; }
+  .vrow:active { background: var(--bg); }
+  .vrow b { font-size: 15px; }
+  .vdep { color: #333; font-family: Menlo, Consolas, monospace; font-size: 13px; }
+  .vdist { font-weight: 600; } .vdist.up { color: var(--green); }
+  .vvol { color: var(--sec); font-size: 13px; }
+  @media (max-width: 560px) { .vrow { grid-template-columns: 1fr 1fr; } .vrow .vvol { display: none; } }
+  .vact { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+  .vnote { margin-top: 12px; }
+  .vsel { width: 100%; font: 15px -apple-system, Helvetica, Arial, sans-serif; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: #111; }
+  #vDesc { margin: 8px 0 0; }
+  .vrow.irow { grid-template-columns: minmax(90px, 1fr) 2.2fr 1.9fr 0.9fr; }
+  @media (max-width: 560px) { .vrow.irow { grid-template-columns: 1fr auto; } .vrow.irow .itags, .vrow.irow .ilev { grid-column: 1 / -1; } }
+  .itags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; background: var(--bg); color: #333; white-space: nowrap; }
+  .vwhy { margin-top: 10px; font-size: 14px; }
+  .vwhy summary { cursor: pointer; color: var(--blue); font-weight: 600; }
+  #vWhyList { list-style: none; padding: 0; margin: 8px 0; }
+  #vWhyList li { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .grade.g≈, .grade[class*="g≈"] { background: #FEF3C7; color: #92400E; }
+  #lExamples { width: 100%; font: 13px Menlo, Consolas, monospace; padding: 8px; border: 1px solid var(--line); border-radius: 8px; color: #111; }
+  .lrow2 { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 8px; }
+  .ltable { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+  .ltable th { text-align: left; color: var(--sec); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  .ltable td { padding: 5px 6px; border-bottom: 1px solid var(--line); }
+  .ltable tr.lsep td { font-weight: 700; color: var(--blue); padding-top: 10px; }
+  .tag.miss { background: #FEE2E2; color: #991B1B; }
+  .mbadge { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; width: fit-content; }
+  .mstop { background: #FEE2E2; color: #991B1B; } .mpart { background: #FEF3C7; color: #92400E; }
+  .mtrail { background: #E0E7FF; color: #3730A3; } .madd { background: #DCFCE7; color: #166534; }
+  .mhold, .mnew { background: var(--bg); color: #555; }
+  .wright { display: flex; gap: 6px; align-items: center; }
+  #wMgmt { font: 13px -apple-system, Helvetica, Arial, sans-serif; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #111; }
+  .grade { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 4px; vertical-align: 2px; }
+  .grade.gA { background: #DCFCE7; color: #166534; } .grade.gB { background: #E0E7FF; color: #3730A3; } .grade.gC { background: var(--bg); color: #555; }
+  .tag.pd { background: #F3E8FF; color: #7E22CE; font-weight: 700; }
+  .vdist.down { color: var(--red); }
+  .tag.ib { background: #FFF4D6; color: #8A5A00; font-weight: 700; }
+  .ilev { font-size: 13px; color: #333; }
+  .whead { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .whead h2 { margin: 0; }
+  #wSort { font: 14px -apple-system, Helvetica, Arial, sans-serif; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #111; }
+  .wrow { display: grid; grid-template-columns: minmax(90px, 1.4fr) 1.3fr 1fr 0.9fr auto; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  @media (max-width: 560px) { .wrow { grid-template-columns: 1fr 1fr auto; } .wrow .wcol:nth-of-type(2) { display: none; } .wact { grid-column: 1 / -1; justify-content: flex-end; } }
+  .wsym { min-width: 0; display: flex; flex-direction: column; }
+  .wsym b { font-size: 16px; }
+  .wnote { font-size: 12px; color: var(--sec); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wnote:empty { display: none; }
+  .wcol { display: flex; flex-direction: column; font-size: 14px; }
+  .wcol small { font-size: 11px; color: var(--sec); }
+  .wchg { font-weight: 700; font-size: 15px; display: flex; flex-direction: column; align-items: flex-end; }
+  .wchg small { font-size: 11px; font-weight: 400; color: var(--sec); }
+  .wchg.up { color: var(--green); } .wchg.down { color: var(--red); }
+  .wact { display: flex; gap: 6px; }
+  .wbtn { border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 6px 9px; font: 13px -apple-system, Helvetica, Arial, sans-serif; color: #111; cursor: pointer; }
+  .wbtn.del { color: var(--red); }
+  .wfoot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+  #viewer { position: fixed; inset: 0; z-index: 50; background: #525659; display: flex; flex-direction: column; }
+  #viewer .bar { display: flex; align-items: center; gap: 10px; background: var(--navy); color: #fff; padding: calc(10px + env(safe-area-inset-top)) 14px 10px; }
+  #viewer .bar b { flex: 1; min-width: 0; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #viewer .bar span { font-size: 13px; opacity: .8; white-space: nowrap; }
+  #viewer .bar button { font: 600 15px -apple-system, Helvetica, Arial, sans-serif; padding: 8px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,.6); background: transparent; color: #fff; cursor: pointer; }
+  #viewer .bar button.solid { background: #fff; color: var(--navy); border-color: #fff; }
+  #pages { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 0 calc(24px + env(safe-area-inset-bottom)); }
+  .pg { position: relative; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.4); width: min(96%, 900px); aspect-ratio: 842 / 1190; }
+  .pg canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header><h1>Ganesh Charts</h1></header>
+<main>
+  <section class="card">
+    <h2>Step 1 - Choose stocks</h2>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tabCsv" aria-selected="true">Screener CSV</button>
+      <button type="button" role="tab" id="tabLetters" aria-selected="false">By first letter</button>
+    </div>
+    <div id="paneCsv">
+    <label class="file"><span id="fileName">Choose CSV file...</span><input type="file" id="csvFile" accept=".csv,text/csv,text/plain"></label>
+    <p id="found"></p>
+    <p class="small" id="csvDates"></p>
+    </div>
+    <div id="paneLetters" hidden>
+      <div class="letters" id="letterGrid"></div>
+      <div class="lrow">
+        <span id="letterCount" class="count ok">No letters selected</span>
+        <span><button type="button" class="link2" id="lAll">Select all</button> · <button type="button" class="link2" id="lNone">Clear</button></span>
+      </div>
+      <p class="small">From the full NSE list (3,468 stocks). Tip: for big selections choose Split below.</p>
+    </div>
+  </section>
+
+  <section class="card" id="vcpCard">
+    <h2>Scanner</h2>
+    <label class="vlab" for="vMode">Style</label>
+    <select id="vMode" class="vsel">
+      <option value="flag">Daily flag (VCPSwing playbook)</option>
+      <option value="manas">Manas Arora setups (from his posted trades)</option>
+      <option value="india">India momentum + tightness (Manas Arora / Ankur Patel style)</option>
+      <option value="rvol">Relative volume breakout (purple dot style)</option>
+      <option value="vcp">VCP (Minervini), graded A / B / C</option>
+      <option value="learned">Learned from Manas Arora’s trades (or your examples)</option>
+    </select>
+    <p class="small" id="vDesc"></p>
+    <div id="learnBox" hidden>
+      <label class="vlab" for="lExamples">Example trades (SYMBOL, entry date, entry price — one per line)</label>
+      <textarea id="lExamples" rows="6" spellcheck="false" autocapitalize="characters"></textarea>
+      <div class="lrow2">
+        <button type="button" class="wbtn primary" id="lLearn">Learn from these trades</button>
+        <button type="button" class="link2" id="lVcps">Load VCPSwing’s 11 flag entries</button>
+        <button type="button" class="link2" id="lReset">Reset to Manas Arora’s 59 entries</button>
+      </div>
+      <p class="small" id="lStatus"></p>
+      <div id="lProfile"></div>
+    </div>
+    <label class="vlab" for="vUniverse">Scan</label>
+    <select id="vUniverse">
+      <option value="step1">Step 1 selection</option>
+      <option value="watch">Current watchlist</option>
+      <option value="all">All NSE stocks</option>
+    </select>
+    <details class="vset">
+      <summary>Scan settings</summary>
+      <div class="vgrid" id="setIndia">
+        <label>Min 20-day turnover ₹ <input type="number" id="iTurn" value="5" min="0" step="1"> Cr</label>
+        <label>Min price ₹ <input type="number" id="iMinPrice" value="20" min="0"></label>
+        <label>3-month run-up ≥ <input type="number" id="iMom" value="30" min="0" max="300"> %</label>
+        <label><input type="checkbox" id="iRsOn" checked> Beats Nifty (3M) by ≥ <input type="number" id="iRs" value="0" step="1"> pts</label>
+        <label>Within <input type="number" id="iNear52" value="20" min="1" max="60"> % of 52-week high</label>
+        <label><input type="checkbox" id="iTrend" checked> Close &gt; 21 EMA &gt; 50 EMA, 21 EMA rising</label>
+        <label>Max <input type="number" id="iAbove" value="8" min="1" max="40"> % above 21 EMA</label>
+        <label>5-day range ≤ <input type="number" id="iTight" value="8" min="2" max="30"> %</label>
+        <label>ADR (20d) ≥ <input type="number" id="iAdr" value="3" min="0" step="0.5"> %</label>
+        <label><input type="checkbox" id="iVol" checked> Volume dry-up (today &lt; 10-day avg)</label>
+        <label>Inside bar <select id="iIb"><option value="any">Not required (tag if present)</option><option value="1">Required: 1-day</option><option value="2">Required: 2-day (Ankur Patel)</option></select></label>
+      </div>
+      <div class="vgrid" id="setRvol" hidden>
+        <label>Breakout within last <select id="rWithin"><option value="1">1 day (latest)</option><option value="2">2 days</option><option value="3" selected>3 days</option><option value="5">5 days</option><option value="10">10 days</option></select></label>
+        <label>Day move ≥ <input type="number" id="rMove" value="5" min="0" step="0.5"> %</label>
+        <label>Relative volume ≥ <input type="number" id="rRvol" value="2" min="1" step="0.5"> × 50-day avg</label>
+        <label>Volume ≥ <input type="number" id="rMinVol" value="5" min="0" step="1"> lakh shares</label>
+        <label>Base length <input type="number" id="rBase" value="20" min="5" max="120"> days</label>
+        <label>Base depth ≤ <input type="number" id="rBaseMax" value="25" min="3" max="60"> %</label>
+        <label>Close in top <input type="number" id="rClose" value="50" min="0" max="100"> % of day range</label>
+        <label><input type="checkbox" id="rTrend" checked> Close &gt; 21 EMA &gt; 50 EMA</label>
+        <label>Min 20-day turnover ₹ <input type="number" id="rTurn" value="5" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="rMinPrice" value="20" min="0"></label>
+      </div>
+      <div class="vgrid" id="setFlag" hidden>
+        <label>1-month performance ≥ <input type="number" id="fM1" value="10" min="0"> %</label>
+        <label>Pole: ≥ <input type="number" id="fPole" value="20" min="5" max="100"> % in 5 days</label>
+        <label>Flag depth ≤ <input type="number" id="fDepth" value="15" min="3" max="40"> %</label>
+        <label>Flag length ≤ <input type="number" id="fLen" value="15" min="3" max="30"> days</label>
+        <label>Last 3 days range ≤ <input type="number" id="fTight" value="6" min="1" step="0.5"> %</label>
+        <label><input type="checkbox" id="fVol" checked> Flag volume below the pole</label>
+        <label>ATR (14) ≥ <input type="number" id="fAtr" value="3" min="0" step="0.5"> %</label>
+        <label>Price × 30-day volume ≥ ₹ <input type="number" id="fTurn" value="10" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="fMinPrice" value="20" min="0"></label>
+      </div>
+      <div class="vgrid" id="setManas" hidden>
+        <label><input type="checkbox" id="mRsLine" checked> RS line (stock ÷ Nifty) within 2% of its 3-month high</label>
+        <label><input type="checkbox" id="mC" checked> Include C: reversal confirmation (20%+ fall, then 8%+ up day on 2× volume)</label>
+        <label>Setups <select id="mSetup"><option value="both">All (A + B + C)</option><option value="A">A: Base breakout only</option><option value="B">B: 21 EMA pullback only</option></select></label>
+        <label>3-month run-up ≥ <input type="number" id="mMom" value="30" min="0" max="300"> %</label>
+        <label>Within <input type="number" id="mNear" value="15" min="1" max="60"> % of high</label>
+        <label>10-day base ≤ <input type="number" id="mBase" value="12" min="3" max="40"> % (setup A)</label>
+        <label>ADR ≥ <input type="number" id="mAdr" value="3" min="0" step="0.5"> %</label>
+        <label>Low-of-day stop if risk ≤ <input type="number" id="mRisk" value="3" min="1" step="0.5"> %, else 2%</label>
+        <label>Min 20-day turnover ₹ <input type="number" id="mTurn" value="10" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="mMinPrice" value="30" min="0"></label>
+      </div>
+      <div class="vgrid" id="setLearned" hidden>
+        <label>Match at least <input type="number" id="lSim" value="85" min="50" max="100" step="5"> % of rules</label>
+        <label>Widen learned ranges by <input type="number" id="lWiden" value="0" min="0" max="100" step="10"> %</label>
+      </div>
+      <div class="vgrid" id="setVcp" hidden>
+        <label><input type="checkbox" id="vTrend" checked> Trend Template (all 8 rules)</label>
+        <label><input type="checkbox" id="vRsOn" checked> RS rank ≥ <input type="number" id="vRs" value="70" min="1" max="99"></label>
+        <label>Prior run-up ≥ <input type="number" id="vPrior" value="30" min="0" max="300"> %</label>
+        <label>Base lookback <select id="vLook"><option value="65">3 months</option><option value="130">6 months</option><option value="195" selected>9 months</option><option value="250">12 months</option></select></label>
+        <label>Min contractions <input type="number" id="vMinC" value="2" min="2" max="6"></label>
+        <label>First pullback ≤ <input type="number" id="vMaxFirst" value="35" min="5" max="60"> %</label>
+        <label>Final pullback ≤ <input type="number" id="vMaxLast" value="10" min="2" max="30"> %</label>
+        <label><input type="checkbox" id="vHL" checked> Higher lows in the base</label>
+        <label>Last 5 days range ≤ <input type="number" id="vTight5" value="10" min="2" max="30"> %</label>
+        <label>Within <input type="number" id="vDist" value="8" min="1" max="25"> % below pivot</label>
+        <label><input type="checkbox" id="vVol" checked> Volume dry-up, 10d/50d ≤ <input type="number" id="vVolMax" value="0.85" min="0.2" max="1.5" step="0.05"></label>
+        <label>Min 20-day turnover ₹ <input type="number" id="vTurn" value="5" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="vMinPrice" value="20" min="0"></label>
+        <label><input type="checkbox" id="vNear" checked> Also show near misses (fail 1 rule)</label>
+      </div>
+    </details>
+    <button type="button" id="vScan" class="vbtn">Scan for VCP</button>
+    <div id="vProg" hidden>
+      <div class="track"><div id="vBar"></div></div>
+      <p class="small" id="vProgText"></p>
+    </div>
+    <details class="vwhy" id="vWhy" hidden><summary>Why stocks were filtered out</summary><ul id="vWhyList"></ul><p class="small">Each stock is counted under every rule it failed. Loosen the top rules in Scan settings to get more results.</p></details>
+    <p class="small" id="vSummary"></p>
+    <div id="vResults"></div>
+    <div class="vact" id="vActions" hidden>
+      <button type="button" class="wbtn primary" id="vPdf">Make PDF of these</button>
+      <button type="button" class="wbtn" id="vWatch">Add all to watchlist…</button>
+      <button type="button" class="link2 red" id="vClear">Clear results</button>
+    </div>
+    <p class="small vnote">Tap a result to see its chart with the entry / stop-loss (or pivot) lines. Based on publicly described styles, not the traders’ exact rules. A computer shortlist, so study each chart before trading.</p>
+  </section>
+
+  <section class="card" id="step2" hidden>
+    <h2>Step 2 - Filter by screened date</h2>
+    <label class="toggle">Filter by date range <input type="checkbox" id="useFilter"></label>
+    <div id="dateRow" hidden>
+      <label>From<input type="date" id="fromDate"></label>
+      <label>To<input type="date" id="toDate"></label>
+      <p class="count" id="filterCount"></p>
+    </div>
+  </section>
+
+  <section class="card" id="step3" hidden>
+    <h2>Step 3 - Generate PDF</h2>
+    <p class="small">Candlesticks • Volume • SMA 10 • SMA 20 • Daily + Weekly per stock</p>
+    <div class="len">
+      <div>
+        <label for="dBars">Daily chart</label>
+        <div class="lenrow"><input type="number" id="dBars" value="120" min="20" max="750" inputmode="numeric"> <span>days</span> <em id="dHint"></em></div>
+        <div class="chips" data-for="dBars">
+          <button type="button" data-v="60">60</button><button type="button" data-v="120">120</button><button type="button" data-v="180">180</button><button type="button" data-v="250">250</button><button type="button" data-v="500">500</button>
+        </div>
+      </div>
+      <div>
+        <label for="wBars">Weekly chart</label>
+        <div class="lenrow"><input type="number" id="wBars" value="120" min="20" max="520" inputmode="numeric"> <span>weeks</span> <em id="wHint"></em></div>
+        <div class="chips" data-for="wBars">
+          <button type="button" data-v="52">52</button><button type="button" data-v="104">104</button><button type="button" data-v="156">156</button><button type="button" data-v="260">260</button>
+        </div>
+      </div>
+    </div>
+    <div class="pdbox">
+      <label class="pdon"><input type="checkbox" id="pdOn" checked> <span class="pddot"></span> Purple dots on all charts</label>
+      <div class="pdopts" id="pdOpts">
+        <label>Day move ≥ <input type="number" id="pdDay" value="5" min="0" step="0.5"> %</label>
+        <label>Week move ≥ <input type="number" id="pdWeek" value="10" min="0" step="0.5"> %</label>
+        <label>Volume ≥ <input type="number" id="pdRvol" value="2" min="1" step="0.5"> × average</label>
+        <label>Min volume <input type="number" id="pdMinVol" value="5" min="0" step="1"> lakh</label>
+      </div>
+      <p class="small">A dot under every up candle with a big move on heavy volume (vs the 50-day / 20-week average). Shows in the PDF and the chart windows.</p>
+    </div>
+    <div class="split" role="group" aria-label="PDF output">
+      <label><input type="radio" name="split" value="single" checked> Single PDF</label>
+      <label><input type="radio" name="split" value="split"> Split every <input type="number" id="splitN" value="150" min="1" step="1" inputmode="numeric" aria-label="Stocks per PDF"> stocks</label>
+    </div>
+    <button id="go" type="button" disabled>Generate PDF</button>
+    <div id="progress" hidden style="margin-top:14px">
+      <div class="track"><div id="bar"></div></div>
+      <p id="ptext"></p>
+      <p id="errors" hidden></p>
+    </div>
+  </section>
+
+  <section class="card" id="watchCard" hidden>
+    <div class="whead">
+      <h2>★ Watchlists</h2>
+      <select id="wSort" aria-label="Sort watchlist">
+        <option value="recent">Recently added</option>
+        <option value="best">Best % first</option>
+        <option value="worst">Worst % first</option>
+        <option value="az">A–Z</option>
+      </select>
+    </div>
+    <div class="wtabs" id="wTabs" role="tablist"></div>
+    <div class="wtools">
+      <span><button type="button" class="link2" id="wRename">Rename</button> · <button type="button" class="link2 red" id="wDelList">Delete list</button></span>
+      <span class="wright"><select id="wMgmt" aria-label="Exit rules"><option value="manas">Exit rules: Manas Arora</option><option value="vcps">Exit rules: VCPSwing</option></select>
+      <button type="button" class="wbtn" id="wSelect">Select</button></span>
+    </div>
+    <div class="wselbar" id="wSelBar" hidden>
+      <button type="button" class="link2" id="wSelAll">All</button>
+      <span id="wSelCount">0 selected</span>
+      <button type="button" class="wbtn primary" id="wMove">Move to…</button>
+      <button type="button" class="wbtn" id="wCopy">Copy to…</button>
+      <button type="button" class="wbtn del" id="wDelSel">Remove</button>
+    </div>
+    <p class="small" id="wEmpty" hidden>This list is empty. Add stocks with ☆ while viewing a PDF, move them here from another list, or Import a backup from your other device.</p>
+    <div id="watchList"></div>
+    <div class="wfoot"><span class="small" id="wUpdated"></span><button type="button" class="link2" id="wRefresh">Refresh prices</button></div>
+    <div class="wsync">
+      <span class="small">Sync iPad ↔ phone</span>
+      <span>
+        <button type="button" class="wbtn" id="wExport">Export</button>
+        <button type="button" class="wbtn" id="wImportBtn">Import</button>
+        <input type="file" id="wImport" accept=".json,application/json" hidden>
+      </span>
+    </div>
+  </section>
+
+  <section class="card" id="saved" hidden>
+    <h2>Your PDFs</h2>
+    <p class="small">Saved in this browser. They stay here after going back or reloading, until you generate again.</p>
+    <div id="downloads"></div>
+    <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
+  </section>
+  <p class="small" style="text-align:center">Version 26 · VCPSwing set 2 refinements</p>
+</main>
+<div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
+  <div class="cwbar">
+    <button type="button" id="cwClose">Close</button>
+    <b><span id="cwTitle"></span> <small id="cwList"></small></b>
+    <span id="cwPos"></span>
+    <button type="button" id="cwPrev" aria-label="Previous stock">‹ Prev</button>
+    <button type="button" id="cwNext" class="solid" aria-label="Next stock">Next ›</button>
+  </div>
+  <div id="cwBody">
+    <div class="cwfresh"><span id="cwFresh"></span><button type="button" class="wbtn" id="cwRefresh">↻ Refresh</button></div>
+    <div id="cwInfo"></div>
+    <p id="cwNote"></p>
+    <p id="cwStatus" hidden></p>
+    <p class="cwlab">DAILY</p>
+    <canvas id="cwDaily" width="1600" height="920"></canvas>
+    <p class="cwlab">WEEKLY</p>
+    <canvas id="cwWeekly" width="1600" height="920"></canvas>
+    <p class="small cwhint">Swipe left / right or use Prev / Next. ★ and the dashed line mark when and where you added it.</p>
+  </div>
+</div>
+<div id="pick" hidden role="dialog" aria-modal="true" aria-labelledby="pickTitle">
+  <div class="sheet">
+    <div class="shead"><b id="pickTitle"></b><button type="button" class="wbtn primary" id="pickDone">Done</button></div>
+    <div id="pickList"></div>
+    <div class="pnew"><input type="text" id="pickNew" placeholder="New list name" aria-label="New list name"><button type="button" class="wbtn" id="pickCreate">+ Create</button></div>
+  </div>
+</div>
+<div id="toast" hidden role="status" aria-live="polite"></div>
+<div id="viewer" hidden role="dialog" aria-modal="true" aria-label="PDF viewer">
+  <div class="bar"><button type="button" id="vClose">Close</button><b id="vTitle"></b><span id="vPage"></span><button type="button" class="star" id="vStar" aria-pressed="false" hidden>☆ Add</button><button type="button" class="solid" id="vSave">Save</button></div>
+  <div id="pages"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="symbols.js?v=26"></script>
+<script src="app.js?v=26"></script>
+<script>
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+</script>
+</body>
+</html>
