@@ -2,7 +2,7 @@
  * App files: network first (so updates always arrive), cache as offline fallback.
  * Libraries from cdnjs: cache first. Stock data: never cached here.
  */
-const CACHE = "ganesh-charts-v31";
+const CACHE = "ganesh-charts-v32";
 const APP = ["./", "./index.html", "./app.js", "./symbols.js", "./manifest.json", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", e => {

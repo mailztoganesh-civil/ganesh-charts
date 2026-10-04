@@ -119,113 +119,186 @@ $("dBars").oninput = $("wBars").oninput = barHints;
 $("dBars").onchange = $("wBars").onchange = () => { barHints(); saveSettings(); };
 barHints();
 
-/* ───────── PKScreener scans 1 · 2 · 3 (ported as-is) ─────────
- * Ported from PKScreener (https://github.com/pkjmesra/PKScreener) —
- * ScreeningStatistics.findBreakoutValue / findPotentialBreakout / validateConsolidation /
- * validateVolume / validateLTP and StockScreener options 1, 2, 3, with its default config
- * (daysToLookback 22, consolidationPercentage 10, volumeRatio 2.5, minPrice 20, maxPrice 50000,
- * minimumVolume 10000, onlyStageTwoStocks y).
- *
- * MIT License — Copyright (c) 2023 pkjmesra (PKScreener)
- * Permission is hereby granted, free of charge, to any person obtaining a copy of this software
- * and associated documentation files (the "Software"), to deal in the Software without
- * restriction, including without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions: The above copyright notice
- * and this permission notice shall be included in all copies or substantial portions of the
- * Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
- * INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
- * AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
- * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
-function pksSettings() {
+/* ───────── Base patterns with a pivot (O'Neil / CAN SLIM-style, price & volume only) ─────────
+ * Bases: Flat base, Cup with handle, Double bottom. Each needs a prior uptrend of 30%+ into the
+ * base and a stock trading above its 200-day average (stage 2).
+ * Pivot (buy point): flat base = base high · cup = handle high · double bottom = middle peak.
+ * Buy zone = pivot to 5% above. Breakout volume = 40%+ above the 50-day average.
+ * Stop = 7–8% below the buy point (O'Neil's loss-cutting rule), or the handle / base low if tighter.
+ * RS Rating (1–99) ranks the 12-month weighted performance against every stock scanned.
+ * A/D grade (A–E) compares volume on up days vs down days over 13 weeks.
+ * Fundamentals (EPS / sales growth etc.) are not available here — check them separately. */
+function baseSettings() {
   return {
-    option: $("pkOption").value,                                   // "1" | "2" | "3"
-    days: clampInt($("pkDays").value, 5, 120, 22),
-    consol: Math.max(0.5, parseFloat($("pkConsol").value) || 10),
-    volRatio: Math.max(0, parseFloat($("pkVolRatio").value) || 2.5),
-    minPrice: Math.max(0, parseFloat($("pkMin").value) || 20),
-    maxPrice: Math.max(1, parseFloat($("pkMax").value) || 50000),
-    minVolume: Math.max(0, parseFloat($("pkMinVol").value) || 10000),
-    stageTwo: $("pkStage2").checked,
+    types: { flat: $("bFlat").checked, cup: $("bCup").checked, dbl: $("bDbl").checked },
+    prior: clampInt($("bPrior").value, 0, 300, 30),
+    rsOn: $("bRsOn").checked, rsMin: clampInt($("bRs").value, 1, 99, 70),
+    near: clampInt($("bNear").value, 1, 60, 15),
+    maxBelow: clampInt($("bBelow").value, 1, 30, 8),
+    showExt: $("bExt").checked,
+    turn: Math.max(0, parseFloat($("bTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("bMinPrice").value) || 0),
   };
 }
 
-function analysePK(cAll, cfg) {
-  // PKScreener works on 1 year of daily data, newest first
-  const c = cAll.slice(-250);
-  const n = c.length;
-  if (n < cfg.days + 1) return null;
-  const d = c.slice().reverse();                                   // d[0] = today
-  const close = d[0].close;
-
-  // validateLTP: price range + stage two (not < 2× yearly low AND < 0.75× yearly high)
-  if (close < cfg.minPrice || close > cfg.maxPrice) return null;
-  let stageTwo = true;
-  if (d.length >= 250) {
-    const closes = d.slice(0, 250).map(x => x.close);
-    const yLow = Math.min(...closes), yHigh = Math.max(...closes);
-    if (close < 2 * yLow && close < 0.75 * yHigh) stageTwo = false;
+function adGrade(c) {
+  // 13 weeks: volume on up days vs down days
+  const n = c.length; let up = 0, dn = 0;
+  for (let j = Math.max(1, n - 65); j < n; j++) {
+    if (c[j].close > c[j - 1].close) up += c[j].volume; else if (c[j].close < c[j - 1].close) dn += c[j].volume;
   }
-  if (cfg.stageTwo && !stageTwo) return null;
-  const pct = d[1] ? (close / d[1].close - 1) * 100 : 0;
+  const r = dn > 0 ? up / dn : 2;
+  return { ratio: Math.round(r * 100) / 100, grade: r >= 1.5 ? "A" : r >= 1.2 ? "B" : r >= 0.9 ? "C" : r >= 0.7 ? "D" : "E" };
+}
 
-  // validateVolume: ratio = today's volume / 20-day volume MA; min volume on either
-  let s20 = 0; for (let j = 0; j < 20 && j < d.length; j++) s20 += d[j].volume;
-  const volMA = s20 / Math.min(20, d.length);
-  const hasMinVolQty = volMA >= cfg.minVolume || d[0].volume >= cfg.minVolume;
-  if (!hasMinVolQty) return null;
-  const volRatio = volMA > 0 ? Math.round(d[0].volume / volMA * 100) / 100 : 0;
-  const hasMinVolumeRatio = volRatio >= cfg.volRatio;
-
-  const trimmed = d.slice(0, cfg.days);                              // processedData
-
-  // validateConsolidation over the trimmed window (closes)
-  const tc = trimmed.map(x => x.close);
-  const hc = Math.max(...tc), lc = Math.min(...tc);
-  const consol = hc - lc !== 0 ? Math.round(Math.abs((hc - lc) / hc) * 1000) / 10 : 0;
-
-  // findBreakoutValue on the trimmed window minus today
-  const prev = trimmed.slice(1);
-  const maxHigh = Math.round(Math.max(...prev.map(x => x.high)) * 100) / 100;
-  const maxClose = Math.round(Math.max(...prev.map(x => x.close)) * 100) / 100;
-  let bo, r;
-  if (maxHigh > maxClose) {
-    if (maxHigh - maxClose <= maxHigh * 2 / 100) { bo = maxClose; r = maxHigh; }
-    else {
-      const shadows = prev.filter(x => x.high > maxClose).length;
-      if (shadows && cfg.days / shadows <= 3) { bo = maxHigh; r = 0; }
-      else { bo = maxClose; r = maxHigh; }
-    }
-  } else { bo = maxClose; r = 0; }
-  const bullish = d[0].close >= d[0].open;
-  const brokeOut = close >= bo;
-
-  // findPotentialBreakout (scan 1 "(Potential)")
-  let potential = false;
-  if (d.length >= 231) {
-    const hi = (a, b) => { let m = -Infinity; for (let j = a; j < b && j < d.length; j++) m = Math.max(m, d[j].high); return m; };
-    const hh200 = hi(1, 201), hh30 = hi(1, 31), hh200From30 = hi(31, 231), hh8From30 = hi(31, 39);
-    let v200 = 0, v50 = 0;
-    for (let j = 0; j < 200; j++) v200 += d[j].volume;
-    for (let j = 0; j < 50; j++) v50 += d[j].volume;
-    v200 /= 200; v50 /= 50;
-    const rc = Math.round(close * 1.05 * 100) / 100;
-    potential = rc > hh200 && ((hh30 < hh200From30 && d[0].volume > v200) || (hh30 < hh8From30 && d[0].volume > v50));
-  }
-
-  let pass = false;
-  if (cfg.option === "1") pass = (!brokeOut || potential) && hasMinVolumeRatio;
-  else if (cfg.option === "2") pass = brokeOut && bullish && hasMinVolumeRatio;
-  else pass = consol !== 0 && consol <= cfg.consol;
-  if (!pass) return null;
-
-  const boTxt = `BO: ${bo}${r ? ` R: ${r}` : " R: 0"}${cfg.option === "1" && potential ? " (Potential)" : ""}`;
-  return {
-    mode: "pks", option: cfg.option, close, date: ymd(c[n - 1].date), pct: Math.round(pct * 10) / 10,
-    bo, r, potential, brokeOut, consol, volRatio, stageTwo, boTxt,
-    dist: bo ? Math.round((bo - close) / bo * 1000) / 10 : 0,
+function findBases(c, cfg) {
+  const n = c.length, k = n - 1;
+  const H = c.map(x => x.high), L = c.map(x => x.low), C = c.map(x => x.close);
+  const out = [];
+  const maxIn = (a, b, A) => { let m = -Infinity, i = -1; for (let j = a; j <= b; j++) if (A[j] > m) { m = A[j]; i = j; } return [m, i]; };
+  const minIn = (a, b, A) => { let m = Infinity, i = -1; for (let j = a; j <= b; j++) if (A[j] < m) { m = A[j]; i = j; } return [m, i]; };
+  const priorOk = startIdx => {
+    const [lo] = minIn(Math.max(0, startIdx - 126), startIdx, L);
+    return (H[startIdx] / lo - 1) * 100;
   };
+
+  // Flat base: 5–13 weeks, ≤ 15% deep, starts at its own high (left side), nothing above it since
+  if (cfg.types.flat) {
+    for (let len = 25; len <= 65; len++) {
+      const st = k - len;
+      if (st < 130) break;
+      const [hi, hiIdx] = maxIn(st, k - 1, H);
+      if (hiIdx !== st && hiIdx > st + 5) continue;        // the high must be at the left of the base
+      const [lo, loIdx] = minIn(st, k, L);
+      const depth = (1 - lo / hi) * 100;
+      if (depth > 15) continue;
+      const pu = priorOk(hiIdx);
+      out.push({ type: "Flat base", pivot: hi, baseLow: lo, depth, weeks: Math.round((k - hiIdx) / 5), startIdx: hiIdx, prior: pu, stopRef: lo });
+      break;
+    }
+  }
+
+  // Cup with handle: cup 7–65 weeks, 12–35% deep, bottom in the middle, right side back within
+  // 12% of the left lip; handle 1–4 weeks in the upper half, ≤ 12% deep, drifting sideways/down
+  if (cfg.types.cup) {
+    let best = null;
+    {
+      // right rim = highest high of the last 4 weeks (excluding today); the handle runs from it
+      const [, r] = maxIn(k - 20, k - 1, H);
+      const hl = k - r;
+      if (hl < 5 || r < 60) { /* no handle yet (or too short) */ } else {
+      const [hLow] = minIn(r, k, L);
+      const hDepth = (1 - hLow / H[r]) * 100;
+      if (hDepth <= 12 && hDepth >= 1)
+      for (let p = r - 35; p >= Math.max(1, r - 325); p--) {
+        if (H[p] < H[r] * 0.95 || H[p] > H[r] * 1.15) continue;   // left lip roughly level (rim within ~12%)
+        const [cupHi] = maxIn(p + 1, r - 1, H);
+        if (cupHi > H[p] * 1.001) continue;                // no higher high inside the cup
+        const [lo, loIdx] = minIn(p, r, L);
+        const depth = (1 - lo / H[p]) * 100;
+        if (depth < 12 || depth > 35) continue;
+        const pos = (loIdx - p) / (r - p);
+        if (pos < 0.25 || pos > 0.75) continue;            // U-shaped: bottom in the middle
+        if (hLow < lo + (H[p] - lo) / 2) continue;         // handle in the upper half
+        const pu = priorOk(p);
+        const cand = { type: "Cup with handle", pivot: H[r], baseLow: lo, depth, weeks: Math.round((k - p) / 5), startIdx: p, prior: pu, stopRef: hLow, handleDepth: hDepth, handleWeeks: Math.max(1, Math.round(hl / 5)) };
+        if (!best || cand.depth < best.depth) best = cand;
+        break;
+      }
+      }
+    }
+    if (best) out.push(best);
+  }
+
+  // Double bottom ("W"): two lows within ~5%, the second slightly undercutting the first (or equal),
+  // 7+ weeks overall, 15–35% deep; pivot = middle peak
+  if (cfg.types.dbl) {
+    let dblBest = null;
+    for (let p = k - 35; p >= Math.max(1, k - 250); p--) {
+      const [hi, hiIdx] = maxIn(p, k - 1, H);
+      if (hiIdx !== p) continue;                          // left high starts the base
+      const [lo2, lo2Idx] = minIn(Math.max(p + 15, k - 40), k, L);
+      if (lo2Idx < p + 15) continue;
+      const [lo1, lo1Idx] = minIn(p + 3, lo2Idx - 8, L);
+      if (lo1Idx < 0) continue;
+      if (lo2 > lo1 * 1.03 || lo2 < lo1 * 0.95) continue;  // second low near / slightly under the first
+      const [mid, midIdx] = maxIn(lo1Idx + 1, lo2Idx - 1, H);
+      const depth = (1 - Math.min(lo1, lo2) / hi) * 100;
+      if (depth < 15 || depth > 35) continue;
+      if (mid < Math.min(lo1, lo2) + (hi - Math.min(lo1, lo2)) * 0.4) continue;   // a real middle peak
+      if (C[k] < Math.min(lo1, lo2) + (mid - Math.min(lo1, lo2)) * 0.6) continue;   // right side recovering
+      const pu = priorOk(p);
+      const cand = { type: "Double bottom", pivot: mid, baseLow: Math.min(lo1, lo2), depth, weeks: Math.round((k - p) / 5), startIdx: p, prior: pu, stopRef: lo2 };
+      if (!dblBest || H[p] > H[dblBest.startIdx]) dblBest = cand;     // the true left high = the highest valid start
+    }
+    if (dblBest) out.push(dblBest);
+  }
+  return out;
+}
+
+function analyseBase(c, cfg, niftyMap) {
+  const n = c.length;
+  if (n < 230) return null;
+  const C = c.map(x => x.close), H = c.map(x => x.high), V = c.map(x => x.volume);
+  const k = n - 1, close = C[k];
+  if (close < cfg.minPrice) return null;
+  const v50 = smaAt(V, k - 1, 50);
+  if (close * v50 / 1e7 < cfg.turn) return null;
+  const s50 = smaAt(C, k, 50), s200 = smaAt(C, k, 200), s200b = smaAt(C, k - 22, 200);
+  if (!(close > s200 && s200 >= s200b * 0.995)) return null;          // stage 2: above a flat-to-rising 200-day
+  let hi52 = -Infinity; for (let j = n - 252; j < n; j++) hi52 = Math.max(hi52, H[j]);
+  const off52 = (1 - close / hi52) * 100;
+  if (off52 > cfg.near) return null;
+
+  const bases = findBases(c, cfg).filter(b => b.prior >= cfg.prior);
+  if (!bases.length) return null;
+  // closest to its pivot wins
+  bases.sort((a, b) => Math.abs(close / a.pivot - 1) - Math.abs(close / b.pivot - 1));
+  const b = bases[0];
+  const pivot = b.pivot;
+  const dist = (close / pivot - 1) * 100;                               // + above pivot
+  const volX = v50 > 0 ? V[k] / v50 : 1;
+  let status;
+  if (close > pivot && dist <= 5) status = volX >= 1.4 ? "Breakout on volume" : "In buy zone";
+  else if (dist > 5) status = "Extended";
+  else status = "Forming";
+  if (status === "Extended" && !cfg.showExt) return null;
+  if (status === "Forming" && -dist > cfg.maxBelow) return null;
+  const buyPoint = Math.max(pivot, close > pivot ? close : pivot);
+  const stop8 = buyPoint * 0.92, stopBase = b.stopRef * 0.995;
+  const stop = Math.max(stop8, stopBase);
+  const ad = adGrade(c);
+  let rsNifty = null;
+  if (niftyMap && niftyMap.size) {
+    const n0 = niftyMap.get(ymd(c[k - 126].date)), n1 = niftyMap.get(ymd(c[k].date));
+    if (n0 && n1) rsNifty = ((C[k] / C[k - 126]) - (n1 / n0)) * 100;
+  }
+  return {
+    mode: "base", type: b.type, close, date: ymd(c[k].date), pivot, zoneTop: pivot * 1.05, status,
+    dist: Math.round(dist * 10) / 10, depth: Math.round(b.depth * 10) / 10, weeks: b.weeks, prior: Math.round(b.prior),
+    handleDepth: b.handleDepth ? Math.round(b.handleDepth * 10) / 10 : null, handleWeeks: b.handleWeeks || null,
+    volX: Math.round(volX * 100) / 100, ad: ad.grade, adRatio: ad.ratio, off52: Math.round(off52 * 10) / 10,
+    stop, stopPct: Math.round((1 - stop / buyPoint) * 1000) / 10, s50, s200,
+    rsScore: rsScoreOf(C), rsNifty: rsNifty === null ? null : Math.round(rsNifty * 10) / 10, others: bases.slice(1).map(x => x.type),
+  };
+}
+
+// RS rating across the scanned universe (like MarketSmith's 1–99), then the RS filter
+function finalizeBase(found, allRs, cfg) {
+  const sorted = allRs.filter(x => x !== null).sort((a, b) => a - b);
+  const useRank = sorted.length >= 60;
+  const out = [];
+  for (const r of found) {
+    let rsRank = null;
+    if (useRank && r.rsScore !== null) {
+      let lo = 0, hi = sorted.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (sorted[m] <= r.rsScore) lo = m + 1; else hi = m; }
+      rsRank = Math.max(1, Math.min(99, Math.round(lo / sorted.length * 99)));
+    }
+    if (cfg.rsOn && ((rsRank !== null && rsRank < cfg.rsMin) || (rsRank === null && r.rsNifty !== null && r.rsNifty < 0))) continue;
+    out.push({ ...r, rsRank });
+  }
+  return out;
 }
 
 /* ───────── Daily flag (VCPSwing "Trading Flags 101" playbook) ─────────
@@ -1856,15 +1929,19 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "pks") {
-    add("Scan", r.option === "1" ? "1 \u00B7 Probable Breakouts" : r.option === "2" ? "2 \u00B7 Today's Breakouts" : "3 \u00B7 Consolidating stocks", "up");
-    add("Breakout", r.boTxt);
-    add("LTP", r.close.toFixed(2));
-    add("%Chng", `${r.pct >= 0 ? "+" : ""}${r.pct}%`, r.pct >= 0 ? "up" : "down");
-    add("Consol.", `Range:${r.consol}%`);
-    add("Volume", `${r.volRatio}x`);
-    $("cwNote").textContent = "PKScreener logic (MIT License, \u00A9 2023 pkjmesra). BO = breakout level from the last 22 days; R = next resistance (0 = none).";
-    mark = { lines: [{ price: r.bo, label: "BO", color: "rgb(18,140,51)" }, ...(r.r ? [{ price: r.r, label: "R", color: "rgb(234,88,12)" }] : [])] };
+  if (r.mode === "base") {
+    add("Base", `${r.type} \u00B7 ${r.weeks} weeks \u00B7 ${r.depth}% deep`, "up");
+    add("Status", r.status, r.status === "Breakout on volume" || r.status === "In buy zone" ? "up" : r.status === "Extended" ? "down" : "");
+    add("Pivot", `\u20B9${r.pivot.toFixed(2)}`);
+    add("Buy zone", `\u20B9${r.pivot.toFixed(2)} \u2013 \u20B9${r.zoneTop.toFixed(2)}`);
+    add("Stop", `\u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`);
+    add("Close", `\u20B9${r.close.toFixed(2)} (${r.dist >= 0 ? "+" : ""}${r.dist}% vs pivot)`);
+    if (r.rsRank !== null) add("RS Rating", String(r.rsRank), r.rsRank >= 80 ? "up" : "");
+    else if (r.rsNifty !== null) add("vs Nifty 6M", `${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty}`, r.rsNifty >= 0 ? "up" : "down");
+    add("A/D", `${r.ad} (up/down volume ${r.adRatio})`, r.ad === "A" || r.ad === "B" ? "up" : r.ad === "E" || r.ad === "D" ? "down" : "");
+    add("Volume today", `${r.volX}\u00D7 50-day avg`, r.volX >= 1.4 ? "up" : "");
+    $("cwNote").textContent = `${r.prior}% run-up before the base${r.handleDepth ? ` \u00B7 handle ${r.handleDepth}% deep, ${r.handleWeeks} week${r.handleWeeks > 1 ? "s" : ""}` : ""} \u00B7 ${r.off52}% below the 52-week high${r.others.length ? ` \u00B7 also: ${r.others.join(", ")}` : ""}. Buy only in the buy zone on strong volume; check earnings growth separately.`;
+    mark = { lines: [{ price: r.pivot, label: "Pivot", color: "rgb(18,140,51)" }, { price: r.zoneTop, label: "+5%", color: "rgb(234,88,12)" }, { price: r.stop, label: "Stop", color: "rgb(217,26,26)" }] };
   } else if (r.mode === "flag") {
     if (r.near) add("Near miss", r.near, "down");
     add("Setup", r.day1 ? "Day-1 expansion out of the flag" : r.ib ? "Flag \u00B7 inside day" : "Flag \u00B7 tight", "up");
@@ -2517,7 +2594,7 @@ async function runVcp() {
   if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
   const mode = $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
-  const cfg = mode === "pks" ? pksSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -2536,30 +2613,30 @@ async function runVcp() {
   };
   upd();
   let nifty = null;
-  if (mode === "india" || mode === "vcp" || mode === "learned" || mode === "manas") { $("vProgText").textContent = "Loading Nifty for relative strength\u2026"; nifty = await fetchNiftyMap(); upd(); }
+  if (mode === "india" || mode === "vcp" || mode === "learned" || mode === "manas" || mode === "base") { $("vProgText").textContent = "Loading Nifty for relative strength\u2026"; nifty = await fetchNiftyMap(); upd(); }
   const allRs = [], tally = {};
   await Promise.all(Array.from({ length: Math.min(3, u.symbols.length) }, async () => {
     while (i < u.symbols.length && !vcpStop) {
       const sym = u.symbols[i++];
       const c = await fetchDaily2y(sym);
       if (!c.length) noData++;
-      if (mode === "vcp" && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
-      let r = c.length ? (mode === "pks" ? analysePK(c, cfg) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      if ((mode === "vcp" || mode === "base") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
+      let r = c.length ? (mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
       if ((mode === "vcp" || mode === "flag") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
       }
       if (r) { found.push({ symbol: sym, ...r }); if (c.length) livePrice[sym] = { close: r.close, date: r.date }; }
       done++; upd();
-      if (found.length && done % 10 === 0) { vcp = { results: sortVcp(mode === "vcp" ? finalizeVcp(found, allRs, cfg) : found), scanned: done, universe: u.name, at: Date.now(), mode }; renderVcp(); }
+      if (found.length && done % 10 === 0) { vcp = { results: sortVcp(mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : found), scanned: done, universe: u.name, at: Date.now(), mode }; renderVcp(); }
     }
   }));
-  const finalList = mode === "vcp" ? finalizeVcp(found, allRs, cfg) : found;
+  const finalList = mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : found;
   vcp = { results: sortVcp(finalList), scanned: done, universe: u.name, at: Date.now(), stopped: vcpStop, noData, mode, niftyOk: mode !== "india" || !!nifty, rsRanked: allRs.filter(x => x !== null).length >= 60 };
   try { localStorage.setItem(VCP_KEY, JSON.stringify(vcp)); } catch {}
   try { wakeLock?.release(); } catch {}
   vcpBusy = false;
-  $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${mode === "vcp" && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
+  $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${(mode === "vcp" || mode === "base") && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
   if (mode === "vcp" || mode === "flag") {
     const RULES = mode === "flag" ? FLAG_RULES : VCP_RULES;
     const items = Object.entries(tally).filter(([k]) => k !== "ok").sort((a, b) => b[1] - a[1]);
@@ -2580,7 +2657,7 @@ async function runVcp() {
 const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
   ? (b.ib - a.ib) || (a.risk - b.risk)
   : a.mode === "rvol" ? (a.days - b.days) || (b.rvol - a.rvol)
-  : a.mode === "pks" ? (a.option === "3" ? a.consol - b.consol : b.volRatio - a.volRatio)
+  : a.mode === "base" ? (({ "Breakout on volume": 0, "In buy zone": 1, "Forming": 2, "Extended": 3 })[a.status] - ({ "Breakout on volume": 0, "In buy zone": 1, "Forming": 2, "Extended": 3 })[b.status]) || ((b.rsRank || 0) - (a.rsRank || 0)) || (Math.abs(a.dist) - Math.abs(b.dist))
   : a.mode === "flag" ? ((a.near ? 1 : 0) - (b.near ? 1 : 0)) || ((b.day1 ? 1 : 0) - (a.day1 ? 1 : 0)) || ((b.miniCoil ? 1 : 0) - (a.miniCoil ? 1 : 0)) || ((b.ib ? 1 : 0) - (a.ib ? 1 : 0)) || (a.risk - b.risk)
   : a.mode === "manas" ? ((a.risk > 3) - (b.risk > 3)) || ((b.rsLineHigh ? 1 : 0) - (a.rsLineHigh ? 1 : 0)) || (b.mom - a.mom)
   : a.mode === "learned" ? (b.sim - a.sim) || (b.ib - a.ib) || (a.dist - b.dist)
@@ -2589,7 +2666,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "pks" ? "PKScreener" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -2604,17 +2681,17 @@ function renderVcp() {
     const row = document.createElement("div");
     row.className = "vrow"; row.tabIndex = 0; row.setAttribute("role", "button");
     row.setAttribute("aria-label", `Open ${r.symbol} chart`);
-    if (r.mode === "pks") {
+    if (r.mode === "base") {
       row.classList.add("irow");
       row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
       row.querySelector("b").textContent = r.symbol;
       const tg = row.querySelector(".itags");
-      [`Consol. Range:${r.consol}%`, `Volume ${r.volRatio}x`, `%Chng ${r.pct >= 0 ? "+" : ""}${r.pct}%`, ...(r.potential && r.option === "1" ? ["(Potential)"] : [])]
-        .forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (t === "(Potential)" ? " pd" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `${r.boTxt} \u00B7 LTP ${r.close.toFixed(2)}`;
+      [r.type, r.status, r.rsRank !== null ? `RS ${r.rsRank}` : (r.rsNifty !== null ? `vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null), `A/D ${r.ad}`, `${r.weeks}w, ${r.depth}% deep`, ...(r.status === "Breakout on volume" ? [`Vol ${r.volX}\u00D7`] : [])]
+        .filter(Boolean).forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : i === 1 ? (r.status === "Breakout on volume" ? " ib" : r.status === "Extended" ? " miss" : "") : ""); sp.textContent = t; tg.appendChild(sp); });
+      row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 buy zone to \u20B9${r.zoneTop.toFixed(2)} \u00B7 stop \u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`;
       const de = row.querySelector(".vdist");
-      de.textContent = r.brokeOut ? "Above BO" : `${r.dist.toFixed(1)}% to BO`;
-      if (r.brokeOut) de.classList.add("up");
+      de.textContent = r.dist >= 0 ? `${r.dist.toFixed(1)}% above pivot` : `${Math.abs(r.dist).toFixed(1)}% below pivot`;
+      if (r.dist >= 0 && r.dist <= 5) de.classList.add("up");
       row.onclick = () => openChartWin(r.symbol, vcpSource());
       row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
       box.appendChild(row);
@@ -2730,9 +2807,9 @@ $("vScan").onclick = runVcp;
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setPks").hidden = m !== "pks";
-  if (m === "pks") {
-    $("vDesc").textContent = "PKScreener\u2019s own scans, ported as-is with its default settings: 1 Probable Breakouts, 2 Today\u2019s Breakouts, 3 Consolidating stocks. Shows its \u201CBO / R\u201D breakout levels, consolidation range, volume ratio and % change. Pick the scan in Scan settings. Credit: PKScreener by pkjmesra (MIT License).";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base";
+  if (m === "base") {
+    $("vDesc").textContent = "O\u2019Neil / CAN SLIM-style bases with a pivot: Flat base, Cup with handle, Double bottom \u2014 after a 30%+ run-up, above a rising 200-day, near the high. Shows the pivot, the 5% buy zone, a 7\u20138% stop, RS Rating (1\u201399) and A/D grade (A\u2013E). Price & volume only: check earnings separately.";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
     return;
   }
@@ -2767,7 +2844,7 @@ $("lLearn").onclick = learnFromExamples;
 $("lVcps").onclick = () => { $("lExamples").value = VCPS_EXAMPLES; };
 $("lReset").onclick = () => { $("lExamples").value = MANAS_EXAMPLES; try { localStorage.removeItem("gc:learnText"); } catch {} };
 renderLearned();
-try { const m = localStorage.getItem("gc:vcpmode"); if (m) $("vMode").value = m; } catch {}
+try { const m = localStorage.getItem("gc:vcpmode"); if (m && [...$("vMode").options].some(o => o.value === m)) $("vMode").value = m; } catch {}
 vcpModeUI();
 $("vUniverse").onchange = vcpUniverseLabels;
 $("vPdf").onclick = () => {
@@ -2778,8 +2855,8 @@ $("vPdf").onclick = () => {
   generate(syms);
 };
 function scanItem(r) {
-        const note = r.mode === "pks"
-          ? `PKScreener ${r.option === "1" ? "Probable breakout" : r.option === "2" ? "Today's breakout" : "Consolidating"}: ${r.boTxt}, Range ${r.consol}%`
+        const note = r.mode === "base"
+          ? `${r.type}: pivot \u20B9${r.pivot.toFixed(2)}, buy zone to \u20B9${r.zoneTop.toFixed(2)}, stop \u20B9${r.stop.toFixed(2)}${r.rsRank !== null ? `, RS ${r.rsRank}` : ""}, A/D ${r.ad}`
           : r.mode === "flag"
           ? `Flag (pole +${r.pole}%, ${r.flagDays}d): buy above \u20B9${r.trigger.toFixed(2)}, stop ${r.stopType} \u20B9${r.sl.toFixed(2)}`
           : r.mode === "manas"
@@ -2793,7 +2870,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "pks" ? { entry: r.bo || r.close } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {
