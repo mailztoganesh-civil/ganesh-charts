@@ -119,6 +119,115 @@ $("dBars").oninput = $("wBars").oninput = barHints;
 $("dBars").onchange = $("wBars").onchange = () => { barHints(); saveSettings(); };
 barHints();
 
+/* ───────── PKScreener scans 1 · 2 · 3 (ported as-is) ─────────
+ * Ported from PKScreener (https://github.com/pkjmesra/PKScreener) —
+ * ScreeningStatistics.findBreakoutValue / findPotentialBreakout / validateConsolidation /
+ * validateVolume / validateLTP and StockScreener options 1, 2, 3, with its default config
+ * (daysToLookback 22, consolidationPercentage 10, volumeRatio 2.5, minPrice 20, maxPrice 50000,
+ * minimumVolume 10000, onlyStageTwoStocks y).
+ *
+ * MIT License — Copyright (c) 2023 pkjmesra (PKScreener)
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+ * and associated documentation files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions: The above copyright notice
+ * and this permission notice shall be included in all copies or substantial portions of the
+ * Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+ * INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE
+ * AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+ * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. */
+function pksSettings() {
+  return {
+    option: $("pkOption").value,                                   // "1" | "2" | "3"
+    days: clampInt($("pkDays").value, 5, 120, 22),
+    consol: Math.max(0.5, parseFloat($("pkConsol").value) || 10),
+    volRatio: Math.max(0, parseFloat($("pkVolRatio").value) || 2.5),
+    minPrice: Math.max(0, parseFloat($("pkMin").value) || 20),
+    maxPrice: Math.max(1, parseFloat($("pkMax").value) || 50000),
+    minVolume: Math.max(0, parseFloat($("pkMinVol").value) || 10000),
+    stageTwo: $("pkStage2").checked,
+  };
+}
+
+function analysePK(cAll, cfg) {
+  // PKScreener works on 1 year of daily data, newest first
+  const c = cAll.slice(-250);
+  const n = c.length;
+  if (n < cfg.days + 1) return null;
+  const d = c.slice().reverse();                                   // d[0] = today
+  const close = d[0].close;
+
+  // validateLTP: price range + stage two (not < 2× yearly low AND < 0.75× yearly high)
+  if (close < cfg.minPrice || close > cfg.maxPrice) return null;
+  let stageTwo = true;
+  if (d.length >= 250) {
+    const closes = d.slice(0, 250).map(x => x.close);
+    const yLow = Math.min(...closes), yHigh = Math.max(...closes);
+    if (close < 2 * yLow && close < 0.75 * yHigh) stageTwo = false;
+  }
+  if (cfg.stageTwo && !stageTwo) return null;
+  const pct = d[1] ? (close / d[1].close - 1) * 100 : 0;
+
+  // validateVolume: ratio = today's volume / 20-day volume MA; min volume on either
+  let s20 = 0; for (let j = 0; j < 20 && j < d.length; j++) s20 += d[j].volume;
+  const volMA = s20 / Math.min(20, d.length);
+  const hasMinVolQty = volMA >= cfg.minVolume || d[0].volume >= cfg.minVolume;
+  if (!hasMinVolQty) return null;
+  const volRatio = volMA > 0 ? Math.round(d[0].volume / volMA * 100) / 100 : 0;
+  const hasMinVolumeRatio = volRatio >= cfg.volRatio;
+
+  const trimmed = d.slice(0, cfg.days);                              // processedData
+
+  // validateConsolidation over the trimmed window (closes)
+  const tc = trimmed.map(x => x.close);
+  const hc = Math.max(...tc), lc = Math.min(...tc);
+  const consol = hc - lc !== 0 ? Math.round(Math.abs((hc - lc) / hc) * 1000) / 10 : 0;
+
+  // findBreakoutValue on the trimmed window minus today
+  const prev = trimmed.slice(1);
+  const maxHigh = Math.round(Math.max(...prev.map(x => x.high)) * 100) / 100;
+  const maxClose = Math.round(Math.max(...prev.map(x => x.close)) * 100) / 100;
+  let bo, r;
+  if (maxHigh > maxClose) {
+    if (maxHigh - maxClose <= maxHigh * 2 / 100) { bo = maxClose; r = maxHigh; }
+    else {
+      const shadows = prev.filter(x => x.high > maxClose).length;
+      if (shadows && cfg.days / shadows <= 3) { bo = maxHigh; r = 0; }
+      else { bo = maxClose; r = maxHigh; }
+    }
+  } else { bo = maxClose; r = 0; }
+  const bullish = d[0].close >= d[0].open;
+  const brokeOut = close >= bo;
+
+  // findPotentialBreakout (scan 1 "(Potential)")
+  let potential = false;
+  if (d.length >= 231) {
+    const hi = (a, b) => { let m = -Infinity; for (let j = a; j < b && j < d.length; j++) m = Math.max(m, d[j].high); return m; };
+    const hh200 = hi(1, 201), hh30 = hi(1, 31), hh200From30 = hi(31, 231), hh8From30 = hi(31, 39);
+    let v200 = 0, v50 = 0;
+    for (let j = 0; j < 200; j++) v200 += d[j].volume;
+    for (let j = 0; j < 50; j++) v50 += d[j].volume;
+    v200 /= 200; v50 /= 50;
+    const rc = Math.round(close * 1.05 * 100) / 100;
+    potential = rc > hh200 && ((hh30 < hh200From30 && d[0].volume > v200) || (hh30 < hh8From30 && d[0].volume > v50));
+  }
+
+  let pass = false;
+  if (cfg.option === "1") pass = (!brokeOut || potential) && hasMinVolumeRatio;
+  else if (cfg.option === "2") pass = brokeOut && bullish && hasMinVolumeRatio;
+  else pass = consol !== 0 && consol <= cfg.consol;
+  if (!pass) return null;
+
+  const boTxt = `BO: ${bo}${r ? ` R: ${r}` : " R: 0"}${cfg.option === "1" && potential ? " (Potential)" : ""}`;
+  return {
+    mode: "pks", option: cfg.option, close, date: ymd(c[n - 1].date), pct: Math.round(pct * 10) / 10,
+    bo, r, potential, brokeOut, consol, volRatio, stageTwo, boTxt,
+    dist: bo ? Math.round((bo - close) / bo * 1000) / 10 : 0,
+  };
+}
+
 /* ───────── Daily flag (VCPSwing "Trading Flags 101" playbook) ─────────
  * Scanning filters (his list): 1-month performance > 10%, price × 30-day avg volume > ₹10 Cr,
  * ATR(14) > 3%, price > 50% above the 52-week low, 10 EMA > 20 EMA > 50 EMA, price above 20 EMA.
@@ -1747,7 +1856,16 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "flag") {
+  if (r.mode === "pks") {
+    add("Scan", r.option === "1" ? "1 \u00B7 Probable Breakouts" : r.option === "2" ? "2 \u00B7 Today's Breakouts" : "3 \u00B7 Consolidating stocks", "up");
+    add("Breakout", r.boTxt);
+    add("LTP", r.close.toFixed(2));
+    add("%Chng", `${r.pct >= 0 ? "+" : ""}${r.pct}%`, r.pct >= 0 ? "up" : "down");
+    add("Consol.", `Range:${r.consol}%`);
+    add("Volume", `${r.volRatio}x`);
+    $("cwNote").textContent = "PKScreener logic (MIT License, \u00A9 2023 pkjmesra). BO = breakout level from the last 22 days; R = next resistance (0 = none).";
+    mark = { lines: [{ price: r.bo, label: "BO", color: "rgb(18,140,51)" }, ...(r.r ? [{ price: r.r, label: "R", color: "rgb(234,88,12)" }] : [])] };
+  } else if (r.mode === "flag") {
     if (r.near) add("Near miss", r.near, "down");
     add("Setup", r.day1 ? "Day-1 expansion out of the flag" : r.ib ? "Flag \u00B7 inside day" : "Flag \u00B7 tight", "up");
     add(r.day1 ? "Close" : "Buy above", `\u20B9${r.trigger.toFixed(2)}`);
@@ -2399,7 +2517,7 @@ async function runVcp() {
   if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
   const mode = $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
-  const cfg = mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = mode === "pks" ? pksSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -2426,7 +2544,7 @@ async function runVcp() {
       const c = await fetchDaily2y(sym);
       if (!c.length) noData++;
       if (mode === "vcp" && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
-      let r = c.length ? (mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      let r = c.length ? (mode === "pks" ? analysePK(c, cfg) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
       if ((mode === "vcp" || mode === "flag") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
@@ -2462,6 +2580,7 @@ async function runVcp() {
 const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
   ? (b.ib - a.ib) || (a.risk - b.risk)
   : a.mode === "rvol" ? (a.days - b.days) || (b.rvol - a.rvol)
+  : a.mode === "pks" ? (a.option === "3" ? a.consol - b.consol : b.volRatio - a.volRatio)
   : a.mode === "flag" ? ((a.near ? 1 : 0) - (b.near ? 1 : 0)) || ((b.day1 ? 1 : 0) - (a.day1 ? 1 : 0)) || ((b.miniCoil ? 1 : 0) - (a.miniCoil ? 1 : 0)) || ((b.ib ? 1 : 0) - (a.ib ? 1 : 0)) || (a.risk - b.risk)
   : a.mode === "manas" ? ((a.risk > 3) - (b.risk > 3)) || ((b.rsLineHigh ? 1 : 0) - (a.rsLineHigh ? 1 : 0)) || (b.mom - a.mom)
   : a.mode === "learned" ? (b.sim - a.sim) || (b.ib - a.ib) || (a.dist - b.dist)
@@ -2470,7 +2589,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "pks" ? "PKScreener" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -2485,6 +2604,22 @@ function renderVcp() {
     const row = document.createElement("div");
     row.className = "vrow"; row.tabIndex = 0; row.setAttribute("role", "button");
     row.setAttribute("aria-label", `Open ${r.symbol} chart`);
+    if (r.mode === "pks") {
+      row.classList.add("irow");
+      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+      row.querySelector("b").textContent = r.symbol;
+      const tg = row.querySelector(".itags");
+      [`Consol. Range:${r.consol}%`, `Volume ${r.volRatio}x`, `%Chng ${r.pct >= 0 ? "+" : ""}${r.pct}%`, ...(r.potential && r.option === "1" ? ["(Potential)"] : [])]
+        .forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (t === "(Potential)" ? " pd" : ""); sp.textContent = t; tg.appendChild(sp); });
+      row.querySelector(".ilev").textContent = `${r.boTxt} \u00B7 LTP ${r.close.toFixed(2)}`;
+      const de = row.querySelector(".vdist");
+      de.textContent = r.brokeOut ? "Above BO" : `${r.dist.toFixed(1)}% to BO`;
+      if (r.brokeOut) de.classList.add("up");
+      row.onclick = () => openChartWin(r.symbol, vcpSource());
+      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
+      box.appendChild(row);
+      continue;
+    }
     if (r.mode === "flag") {
       row.classList.add("irow");
       row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
@@ -2595,7 +2730,12 @@ $("vScan").onclick = runVcp;
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setPks").hidden = m !== "pks";
+  if (m === "pks") {
+    $("vDesc").textContent = "PKScreener\u2019s own scans, ported as-is with its default settings: 1 Probable Breakouts, 2 Today\u2019s Breakouts, 3 Consolidating stocks. Shows its \u201CBO / R\u201D breakout levels, consolidation range, volume ratio and % change. Pick the scan in Scan settings. Credit: PKScreener by pkjmesra (MIT License).";
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    return;
+  }
   if (m === "flag") {
     $("vDesc").textContent = "VCPSwing\u2019s Trading Flags 101: a strong 20%+ push in a few days, then a short, shallow, tight pause surfing the 10/20 EMA on drying volume. Entry above the 2\u20133 day high (or the parent bar after an inside day), stop at the day low or 2.5%. Day-1 expansions are shown first; extended moves are skipped.";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
@@ -2638,7 +2778,9 @@ $("vPdf").onclick = () => {
   generate(syms);
 };
 function scanItem(r) {
-        const note = r.mode === "flag"
+        const note = r.mode === "pks"
+          ? `PKScreener ${r.option === "1" ? "Probable breakout" : r.option === "2" ? "Today's breakout" : "Consolidating"}: ${r.boTxt}, Range ${r.consol}%`
+          : r.mode === "flag"
           ? `Flag (pole +${r.pole}%, ${r.flagDays}d): buy above \u20B9${r.trigger.toFixed(2)}, stop ${r.stopType} \u20B9${r.sl.toFixed(2)}`
           : r.mode === "manas"
           ? `Setup ${r.setup}: buy above \u20B9${r.trigger.toFixed(2)}, stop ${r.stopType} \u20B9${r.sl.toFixed(2)} (${r.risk}%)`
@@ -2651,7 +2793,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "pks" ? { entry: r.bo || r.close } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {
