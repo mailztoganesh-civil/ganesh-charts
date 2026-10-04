@@ -3026,6 +3026,7 @@ function renderSyncStatus() {
   el.className = "small" + (syncCfg.error ? " err" : "");
 }
 $("syncBtn").onclick = () => {
+  renderPersist();
   $("syncToken").value = syncCfg.token || "";
   $("syncOff").hidden = !syncOn();
   $("syncSheet").hidden = false;
@@ -3037,6 +3038,7 @@ $("syncSave").onclick = async () => {
   if (!/^(ghp_|github_pat_|gho_)[A-Za-z0-9_]{20,}$/.test(t)) { alert("That doesn't look like a GitHub token (it starts with ghp_ or github_pat_)."); return; }
   syncCfg = { token: t };
   syncSaveCfg();
+  askPersist().then(renderPersist);
   $("syncSheet").hidden = true;
   await syncNow("setup");
   toast(syncCfg.error ? `Sync problem: ${syncCfg.error}` : "Auto-sync is on");
@@ -3045,6 +3047,26 @@ $("syncOff").onclick = () => {
   if (!confirm("Turn off auto-sync on this device? Your lists stay here; the token is removed.")) return;
   syncCfg = {}; syncSaveCfg(); $("syncSheet").hidden = true;
 };
+// Ask the browser to keep this app's data (watchlists, sync token) even when the phone is low on
+// space. Without this, Android can silently clear a web app's storage.
+async function askPersist() {
+  try {
+    if (!navigator.storage || !navigator.storage.persist) return null;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch { return null; }
+}
+async function renderPersist() {
+  const el = $("persistNote");
+  if (!el) return;
+  let ok = null;
+  try { ok = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : null; } catch {}
+  el.textContent = ok === true ? "Storage: protected (the phone won\u2019t clear it on its own)."
+    : ok === false ? "Storage: not protected \u2014 the phone may clear it when space is low. Auto-sync keeps a copy on GitHub, so you can restore with the same token."
+    : "";
+  el.className = "small" + (ok === false ? " err" : "");
+}
+askPersist().then(renderPersist);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncNow("focus"); });
 setInterval(() => { if (document.visibilityState === "visible") syncNow("timer"); }, 120000);
 renderSyncStatus();

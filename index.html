@@ -483,7 +483,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 32 · base patterns with a pivot</p>
+  <p class="small" style="text-align:center">Version 33 · protected storage</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -528,6 +528,7 @@
       <button type="button" class="link2 red" id="syncOff" hidden>Turn off on this device</button>
     </div>
     <p class="small">The token can only read and write your gists — not your code or repos. It stays on this device.</p>
+    <p class="small" id="persistNote"></p>
   </div>
 </div>
 <div id="toast" hidden role="status" aria-live="polite"></div>
@@ -537,8 +538,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=32"></script>
-<script src="app.js?v=32"></script>
+<script src="symbols.js?v=33"></script>
+<script src="app.js?v=33"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
