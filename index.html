@@ -187,6 +187,12 @@
   .mhold, .mnew { background: var(--bg); color: #555; }
   .wright { display: flex; gap: 6px; align-items: center; }
   #wMgmt { font: 13px -apple-system, Helvetica, Arial, sans-serif; padding: 5px 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #111; }
+  .sheetwrap { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; justify-content: center; }
+  .sheetwrap .sheet { background: #fff; width: 100%; max-width: 560px; border-radius: 14px 14px 0 0; padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); max-height: 85vh; overflow-y: auto; }
+  @media (min-width: 700px) { .sheetwrap { align-items: center; } .sheetwrap .sheet { border-radius: 14px; } }
+  .steps { padding-left: 20px; font-size: 14px; line-height: 1.5; }
+  #syncToken { width: 100%; font: 15px Menlo, Consolas, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
+  #syncStatus.err { color: var(--red); }
   .grade { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 4px; vertical-align: 2px; }
   .grade.gA { background: #DCFCE7; color: #166534; } .grade.gB { background: #E0E7FF; color: #3730A3; } .grade.gC { background: var(--bg); color: #555; }
   .tag.pd { background: #F3E8FF; color: #7E22CE; font-weight: 700; }
@@ -442,7 +448,11 @@
     <div id="watchList"></div>
     <div class="wfoot"><span class="small" id="wUpdated"></span><button type="button" class="link2" id="wRefresh">Refresh prices</button></div>
     <div class="wsync">
-      <span class="small">Sync iPad ↔ phone</span>
+      <span class="small" id="syncStatus">Auto-sync off</span>
+      <button type="button" class="wbtn primary" id="syncBtn">Set up auto-sync</button>
+    </div>
+    <div class="wsync">
+      <span class="small">Manual backup</span>
       <span>
         <button type="button" class="wbtn" id="wExport">Export</button>
         <button type="button" class="wbtn" id="wImportBtn">Import</button>
@@ -457,7 +467,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 27 · flag scan fixed + reasons</p>
+  <p class="small" style="text-align:center">Version 28 · automatic watchlist sync</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -486,6 +496,23 @@
     <div class="pnew"><input type="text" id="pickNew" placeholder="New list name" aria-label="New list name"><button type="button" class="wbtn" id="pickCreate">+ Create</button></div>
   </div>
 </div>
+<div id="syncSheet" class="sheetwrap" hidden role="dialog" aria-modal="true" aria-labelledby="syncTitle">
+  <div class="sheet">
+    <div class="shead"><b id="syncTitle">Auto-sync watchlists</b><button type="button" class="wbtn" id="syncClose">Close</button></div>
+    <p class="small">Keeps your watchlists the same on the phone and the iPad, using a private file (a “gist”) in your GitHub account. Do this once on <b>each</b> device with the same token.</p>
+    <ol class="steps">
+      <li>On github.com open <b>Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token (classic)</b>.</li>
+      <li>Note: <i>Ganesh Charts sync</i>. Expiration: <i>No expiration</i> (or 1 year). Tick only <b>gist</b>. Generate, then copy the token (starts with <code>ghp_</code>).</li>
+      <li>Paste it below and tap <b>Turn on</b>. Repeat on the other device with the same token.</li>
+    </ol>
+    <input type="password" id="syncToken" placeholder="ghp_…" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="GitHub token">
+    <div class="lrow2">
+      <button type="button" class="wbtn primary" id="syncSave">Turn on</button>
+      <button type="button" class="link2 red" id="syncOff" hidden>Turn off on this device</button>
+    </div>
+    <p class="small">The token can only read and write your gists — not your code or repos. It stays on this device.</p>
+  </div>
+</div>
 <div id="toast" hidden role="status" aria-live="polite"></div>
 <div id="viewer" hidden role="dialog" aria-modal="true" aria-label="PDF viewer">
   <div class="bar"><button type="button" id="vClose">Close</button><b id="vTitle"></b><span id="vPage"></span><button type="button" class="star" id="vStar" aria-pressed="false" hidden>☆ Add</button><button type="button" class="solid" id="vSave">Save</button></div>
@@ -493,8 +520,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=27"></script>
-<script src="app.js?v=27"></script>
+<script src="symbols.js?v=28"></script>
+<script src="app.js?v=28"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

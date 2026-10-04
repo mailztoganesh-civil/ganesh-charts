@@ -1039,14 +1039,20 @@ const listById = id => WL.lists.find(l => l.id === id);
 const listsWith = sym => WL.lists.filter(l => l.items.some(i => i.symbol === sym));
 const allSymbols = () => [...new Set(WL.lists.flatMap(l => l.items.map(i => i.symbol)))];
 
-function wlSave() { try { localStorage.setItem(WLKEY, JSON.stringify(WL)); } catch {} renderWatch(); }
+function wlSave(fromSync) {
+  if (!fromSync) WL.updatedAt = Date.now();
+  try { localStorage.setItem(WLKEY, JSON.stringify(WL)); } catch {}
+  renderWatch();
+  if (!fromSync && typeof syncSchedulePush === "function") syncSchedulePush();
+}
+function tomb(key) { (WL.tomb = WL.tomb || []).push({ key, at: Date.now() }); if (WL.tomb.length > 500) WL.tomb = WL.tomb.slice(-500); }
 function watchHas(sym) { return listsWith(sym).length > 0; }
 function addToList(list, item) {
   if (list.items.some(i => i.symbol === item.symbol)) return false;
-  list.items.unshift({ ...item });
+  list.items.unshift({ ...item, addedTs: Date.now() });
   return true;
 }
-function removeFromList(list, sym) { list.items = list.items.filter(i => i.symbol !== sym); }
+function removeFromList(list, sym) { list.items = list.items.filter(i => i.symbol !== sym); tomb(`${list.id}|${sym}`); }
 function createList(name) {
   const n = (name || "").trim() || `Watchlist ${WL.lists.length + 1}`;
   const l = { id: newId(), name: n, items: [] };
@@ -1287,7 +1293,7 @@ function renderWatch() {
       e.stopPropagation();
       const v = prompt(`Note for ${w.symbol}`, w.note || "");
       if (v === null) return;
-      w.note = v.trim(); wlSave();
+      w.note = v.trim(); w.editedTs = Date.now(); wlSave();
     };
     row.querySelector(".del").onclick = e => {
       e.stopPropagation();
@@ -1346,12 +1352,13 @@ $("wRename").onclick = () => {
   const L = activeList();
   const v = prompt("Rename watchlist", L.name);
   if (v === null || !v.trim()) return;
-  L.name = v.trim(); wlSave();
+  L.name = v.trim(); L.renamedTs = Date.now(); wlSave();
 };
 $("wDelList").onclick = () => {
   const L = activeList();
   if (!confirm(`Delete "${L.name}" and its ${L.items.length} stock${L.items.length === 1 ? "" : "s"}?`)) return;
   WL.lists = WL.lists.filter(l => l.id !== L.id);
+  tomb(`${L.id}|*`);
   if (!WL.lists.length) WL.lists.push({ id: newId(), name: "Watchlist 1", items: [] });
   WL.active = WL.lists[0].id;
   selectMode = false; selected.clear(); wlSave();
@@ -2633,10 +2640,166 @@ refresh = function () { _refresh(); vcpUniverseLabels(); };
 const _renderWatch = renderWatch;
 renderWatch = function () { _renderWatch(); vcpUniverseLabels(); };
 
+
+/* ───────── Automatic sync between devices (private GitHub Gist) ─────────
+ * Each device keeps its own copy; with a GitHub token (gist permission only) the app keeps one
+ * private gist up to date. On open / when the app comes back to the front / every 2 minutes it
+ * pulls; after any change it pushes. Both sides are merged: lists by id, stocks by symbol,
+ * deletions remembered (tombstones) so a removed stock doesn't come back. */
+const SYNC_KEY = "gc:sync";
+const GIST_DESC = "Ganesh Charts sync (watchlists)";
+const GIST_FILE = "ganesh-charts-watchlists.json";
+let syncCfg = {};
+try { syncCfg = JSON.parse(localStorage.getItem(SYNC_KEY) || "{}"); } catch { syncCfg = {}; }
+let syncTimer = null, syncBusy = false;
+
+function syncSaveCfg() { try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg)); } catch {} renderSyncStatus(); }
+function syncOn() { return !!(syncCfg.token); }
+
+async function gh(path, opts = {}) {
+  const res = await fetch(`https://api.github.com${path}`, {
+    ...opts,
+    headers: { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${syncCfg.token}`, ...(opts.body ? { "Content-Type": "application/json" } : {}) },
+    cache: "no-store",
+  });
+  if (res.status === 401) throw new Error("token rejected (check it has the gist permission)");
+  if (!res.ok) throw new Error(`GitHub HTTP ${res.status}`);
+  return res.status === 204 ? null : res.json();
+}
+
+function mergeWL(a, b) {
+  // a = local, b = remote; returns merged copy
+  const tombs = new Map();
+  for (const t of [...(a.tomb || []), ...(b.tomb || [])]) tombs.set(t.key, Math.max(tombs.get(t.key) || 0, t.at));
+  const byId = new Map();
+  for (const src of [b, a]) {                                 // local processed last (wins ties)
+    for (const l of src.lists || []) {
+      const del = tombs.get(`${l.id}|*`) || 0;
+      const cur = byId.get(l.id);
+      if (!cur) {
+        byId.set(l.id, { ...l, items: l.items.map(i => ({ ...i })) });
+        continue;
+      }
+      if ((l.renamedTs || 0) >= (cur.renamedTs || 0)) { cur.name = l.name; cur.renamedTs = l.renamedTs; }
+      for (const it of l.items) {
+        const have = cur.items.find(x => x.symbol === it.symbol);
+        if (!have) cur.items.push({ ...it });
+        else if ((it.editedTs || it.addedTs || 0) >= (have.editedTs || have.addedTs || 0)) Object.assign(have, it);
+      }
+      cur._del = del;
+    }
+  }
+  const lists = [];
+  for (const l of byId.values()) {
+    const del = tombs.get(`${l.id}|*`) || 0;
+    const newest = Math.max(l.renamedTs || 0, ...l.items.map(i => i.addedTs || 0));
+    if (del && newest <= del) continue;                      // list deleted (and nothing newer)
+    l.items = l.items.filter(i => (i.addedTs || 0) > (tombs.get(`${l.id}|${i.symbol}`) || 0) || !tombs.has(`${l.id}|${i.symbol}`));
+    delete l._del;
+    lists.push(l);
+  }
+  // keep the local order of lists where possible
+  const order = (a.lists || []).map(l => l.id);
+  lists.sort((x, y) => (order.indexOf(x.id) + 1 || 1e9) - (order.indexOf(y.id) + 1 || 1e9));
+  if (!lists.length) lists.push({ id: newId(), name: "Watchlist 1", items: [] });
+  return {
+    lists, active: lists.some(l => l.id === a.active) ? a.active : lists[0].id,
+    tomb: [...tombs.entries()].map(([key, at]) => ({ key, at })).slice(-500),
+    updatedAt: Math.max(a.updatedAt || 0, b.updatedAt || 0),
+  };
+}
+
+async function syncFindGist() {
+  if (syncCfg.gistId) return syncCfg.gistId;
+  for (let page = 1; page <= 3; page++) {
+    const list = await gh(`/gists?per_page=100&page=${page}`);
+    const g = list.find(x => x.description === GIST_DESC || (x.files && x.files[GIST_FILE]));
+    if (g) { syncCfg.gistId = g.id; syncSaveCfg(); return g.id; }
+    if (list.length < 100) break;
+  }
+  return null;
+}
+
+function syncPayload() {
+  return JSON.stringify({ app: "ganesh-charts", type: "watchlists-sync", version: 1, lists: WL.lists, tomb: WL.tomb || [], updatedAt: WL.updatedAt || Date.now() });
+}
+
+async function syncNow(reason) {
+  if (!syncOn() || syncBusy) return;
+  syncBusy = true;
+  syncCfg.status = "Syncing\u2026"; renderSyncStatus();
+  try {
+    const id = await syncFindGist();
+    if (!id) {
+      const g = await gh("/gists", { method: "POST", body: JSON.stringify({ description: GIST_DESC, public: false, files: { [GIST_FILE]: { content: syncPayload() } } }) });
+      syncCfg.gistId = g.id;
+    } else {
+      const g = await gh(`/gists/${id}`);
+      const f = g.files && g.files[GIST_FILE];
+      let remote = null;
+      if (f) {
+        let txt = f.content;
+        if (f.truncated && f.raw_url) txt = await (await fetch(f.raw_url, { cache: "no-store" })).text();
+        try { remote = JSON.parse(txt); } catch {}
+      }
+      const merged = remote && Array.isArray(remote.lists) ? mergeWL(WL, remote) : WL;
+      const changedLocal = JSON.stringify(merged.lists) !== JSON.stringify(WL.lists);
+      if (changedLocal) { WL = merged; wlSave(true); refreshPrices(); }
+      else { WL.tomb = merged.tomb; }
+      if (!remote || JSON.stringify(remote.lists) !== JSON.stringify(WL.lists)) {
+        await gh(`/gists/${id}`, { method: "PATCH", body: JSON.stringify({ files: { [GIST_FILE]: { content: syncPayload() } } }) });
+      }
+    }
+    syncCfg.lastSync = Date.now(); syncCfg.status = ""; syncCfg.error = "";
+  } catch (e) {
+    syncCfg.error = e.message || "sync failed";
+  }
+  syncBusy = false;
+  syncSaveCfg();
+}
+function syncSchedulePush() {
+  if (!syncOn()) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => syncNow("change"), 2500);
+}
+function renderSyncStatus() {
+  const el = $("syncStatus");
+  if (!el) return;
+  if (!syncOn()) { el.textContent = "Auto-sync off"; $("syncBtn").textContent = "Set up auto-sync"; return; }
+  $("syncBtn").textContent = "Sync settings";
+  el.textContent = syncCfg.error ? `Auto-sync error: ${syncCfg.error}` : syncCfg.status ? syncCfg.status
+    : syncCfg.lastSync ? `Auto-sync on \u00B7 synced ${new Date(syncCfg.lastSync).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "Auto-sync on";
+  el.className = "small" + (syncCfg.error ? " err" : "");
+}
+$("syncBtn").onclick = () => {
+  $("syncToken").value = syncCfg.token || "";
+  $("syncOff").hidden = !syncOn();
+  $("syncSheet").hidden = false;
+};
+$("syncClose").onclick = () => { $("syncSheet").hidden = true; };
+$("syncSheet").onclick = e => { if (e.target === $("syncSheet")) $("syncSheet").hidden = true; };
+$("syncSave").onclick = async () => {
+  const t = $("syncToken").value.trim();
+  if (!/^(ghp_|github_pat_|gho_)[A-Za-z0-9_]{20,}$/.test(t)) { alert("That doesn't look like a GitHub token (it starts with ghp_ or github_pat_)."); return; }
+  syncCfg = { token: t };
+  syncSaveCfg();
+  $("syncSheet").hidden = true;
+  await syncNow("setup");
+  toast(syncCfg.error ? `Sync problem: ${syncCfg.error}` : "Auto-sync is on");
+};
+$("syncOff").onclick = () => {
+  if (!confirm("Turn off auto-sync on this device? Your lists stay here; the token is removed.")) return;
+  syncCfg = {}; syncSaveCfg(); $("syncSheet").hidden = true;
+};
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncNow("focus"); });
+setInterval(() => { if (document.visibilityState === "visible") syncNow("timer"); }, 120000);
+renderSyncStatus();
+
 restore();
 $("pdOpts").hidden = !$("pdOn").checked;
 refresh();
 renderSaved();
 renderVcp();
+syncNow("open");
 renderWatch();
 refreshPrices();
