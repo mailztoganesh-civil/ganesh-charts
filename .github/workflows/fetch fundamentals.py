@@ -214,6 +214,38 @@ def eps_row(df):
     return None
 
 
+def series(df, *names):
+    if df is None or getattr(df, "empty", True):
+        return {}
+    for n in names:
+        if n in df.index:
+            return {str(k)[:10]: num(v) for k, v in df.loc[n].items() if num(v) is not None}
+    return {}
+
+
+def quarter_table(df):
+    pat = series(df, "NetIncome", "NetIncomeCommonStockholders", "NetIncomeContinuousOperations")
+    sales = series(df, "TotalRevenue", "OperatingRevenue")
+    op = series(df, "OperatingIncome", "EBIT")
+    dates = sorted(set(pat) | set(sales))
+    rows = []
+    for i, d in enumerate(dates):
+        def pct(cur, prev):
+            return round((cur - prev) / abs(prev) * 100, 1) if cur is not None and prev else None
+        def back(series_, k):
+            return series_.get(dates[i - k]) if i - k >= 0 else None
+        p, sl = pat.get(d), sales.get(d)
+        rows.append({
+            "d": d,
+            "pat": round(p / 1e7, 2) if p is not None else None,
+            "sales": round(sl / 1e7, 2) if sl is not None else None,
+            "patYoY": pct(p, back(pat, 4)), "patQoQ": pct(p, back(pat, 1)),
+            "salesYoY": pct(sl, back(sales, 4)), "salesQoQ": pct(sl, back(sales, 1)),
+            "opm": round(op[d] / sl * 100, 1) if d in op and sl else None,
+        })
+    return rows[-6:]
+
+
 def growth(new, old):
     if new is None or old is None or old <= 0:
         return None                              # growth from a loss isn't meaningful
@@ -256,7 +288,18 @@ def fetch_one(sym):
     if rec["inst"] is not None:
         rec["src"]["I"] = "Yahoo"
     rec["roe"] = num(info.get("returnOnEquity"))
-    rec["name"] = info.get("shortName") or info.get("longName")
+    rec["name"] = info.get("longName") or info.get("shortName")
+    # chart header (MarketSmith-style): market cap, free-float cap, sector, listing year
+    mc = num(info.get("marketCap"))
+    rec["mcap"] = round(mc / 1e7) if mc else None
+    fl, px = num(info.get("floatShares")), num(info.get("currentPrice") or info.get("regularMarketPrice"))
+    rec["ff"] = round(fl * px / 1e7) if fl and px else None
+    rec["sector"] = info.get("sector"); rec["industry"] = info.get("industry")
+    ft = info.get("firstTradeDateMilliseconds") or (info.get("firstTradeDateEpochUtc") and info.get("firstTradeDateEpochUtc") * 1000)
+    try:
+        rec["listed"] = datetime.datetime.utcfromtimestamp(ft / 1000).year if ft else None
+    except Exception:
+        rec["listed"] = None
 
     # annual EPS (oldest -> newest)
     try:
@@ -275,9 +318,18 @@ def fetch_one(sym):
         if "Rate" in type(e).__name__ or "429" in str(e):
             raise
 
+    # quarterly results table for the chart: PAT, sales, YoY / QoQ, operating margin (Rs crore)
+    qdf = None
+    try:
+        qdf = t.get_income_stmt(pretty=False, freq="quarterly")
+        rec["qTable"] = quarter_table(qdf)
+    except Exception as e:
+        if "Rate" in type(e).__name__ or "429" in str(e):
+            raise
+
     # quarterly EPS from Yahoo: used when NSE gave nothing, or when Yahoo has a newer quarter
     try:
-        row = eps_row(t.get_income_stmt(pretty=False, freq="quarterly"))
+        row = eps_row(qdf)
         if row is not None:
             pts = sorted([(str(k)[:10], num(v)) for k, v in row.items() if num(v) is not None])
             nse_last = rec["qList"][-1]["d"] if rec["src"].get("C") == "NSE" and rec.get("qList") else ""
