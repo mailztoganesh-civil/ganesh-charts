@@ -228,6 +228,10 @@ def fetch_one(sym):
         q = nse_quarterly(sym)
     except Exception:
         q = []
+    # NSE's comparison feed can be months behind: ignore it if its latest quarter is over ~6 months old
+    if q and (datetime.date.today() - datetime.date.fromisoformat(q[-1]["d"])).days > 200:
+        rec["nseStale"] = q[-1]["d"]
+        q = []
     if q:
         g, gp = yoy(q, "eps")
         r_, _ = yoy(q, "rev")
@@ -271,12 +275,24 @@ def fetch_one(sym):
         if "Rate" in type(e).__name__ or "429" in str(e):
             raise
 
-    # quarterly EPS from Yahoo: only when NSE didn't provide it
+    # quarterly EPS from Yahoo: used when NSE gave nothing, or when Yahoo has a newer quarter
     try:
-        row = None if rec["src"].get("C") == "NSE" else eps_row(t.get_income_stmt(pretty=False, freq="quarterly"))
+        row = eps_row(t.get_income_stmt(pretty=False, freq="quarterly"))
         if row is not None:
             pts = sorted([(str(k)[:10], num(v)) for k, v in row.items() if num(v) is not None])
-            rec["qList"] = [{"d": d, "eps": round(v, 4)} for d, v in pts][-6:]
+            nse_last = rec["qList"][-1]["d"] if rec["src"].get("C") == "NSE" and rec.get("qList") else ""
+            newer = bool(pts) and pts[-1][0] > nse_last
+            if not newer:
+                pts = []                         # NSE is as recent (or newer): keep the official figures
+            else:
+                rec["qList"] = [{"d": d, "eps": round(v, 4)} for d, v in pts][-6:]
+                if rec["src"].get("C") == "NSE":
+                    rec["src"].pop("C", None); rec.pop("qEps", None); rec.pop("qEpsPrev", None)
+                    # fall back to Yahoo's own quarterly figures for C and sales
+                    if num(info.get("earningsQuarterlyGrowth")) is not None:
+                        rec["qEps"] = num(info.get("earningsQuarterlyGrowth")); rec["src"]["C"] = "Yahoo"
+                    if num(info.get("revenueGrowth")) is not None:
+                        rec["qRev"] = num(info.get("revenueGrowth")); rec["src"]["sales"] = "Yahoo"
             if len(pts) >= 5:
                 g = growth(pts[-1][1], pts[-5][1])
                 if g is not None:
