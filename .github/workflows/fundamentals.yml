@@ -8,7 +8,7 @@ on:
   push:
     paths:
       - ".github/workflows/fundamentals.yml"
-      - "scripts/fetch_fundamentals.py"
+      - "**/*fundamentals*.py"
   schedule:
     - cron: "0 14 * * 1-5"      # daily, 19:30 IST
     - cron: "30 1 * * 6"        # weekly full, Saturday 07:00 IST
@@ -39,6 +39,12 @@ jobs:
             export MODE=full
           fi
           echo "Mode: $MODE"
+          # find the script wherever it was uploaded (any folder, any spacing of the name)
+          SCRIPT=$(git ls-files | grep -iE 'fetch[ _-]?fundamentals\.py$' | head -1)
+          if [ -z "$SCRIPT" ]; then echo "fetch_fundamentals.py not found in the repo"; exit 1; fi
+          echo "Using $SCRIPT"
+          mkdir -p scripts
+          if [ "$SCRIPT" != "scripts/fetch_fundamentals.py" ]; then cp "$SCRIPT" scripts/fetch_fundamentals.py; fi
           python scripts/fetch_fundamentals.py
         env:
           WORKERS: "3"
