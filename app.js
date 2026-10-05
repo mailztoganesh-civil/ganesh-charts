@@ -301,6 +301,135 @@ function finalizeBase(found, allRs, cfg) {
   return out;
 }
 
+/* ───────── CAN SLIM (technical part; earnings checked via links) ─────────
+ * C  Current quarterly EPS +25%      → not in price data: each result links to Screener.in to check
+ * A  Annual EPS growth +25%          → same link
+ * N  New high / new base             → within 15% of the 52-week high AND (a new 52-week high in the
+ *                                       last 10 days OR a proper base with a pivot near the price)
+ * S  Supply & demand                 → A/D grade A or B (more volume on up days), volume up on breakouts
+ * L  Leader                          → RS Rating ≥ 80 (ranked across the stocks scanned)
+ * I  Institutional sponsorship       → proxy only: accumulation + rising 50-day vs 200-day volume
+ * M  Market direction                → Nifty trend (above 50 & 200-day = confirmed uptrend) */
+/* Fundamentals (C, A, I) come from data/fundamentals.json, refreshed weekly by the
+ * "Update fundamentals" GitHub Action in this repo (scripts/fetch_fundamentals.py). */
+let FUND = null, fundTried = false;
+async function loadFundamentals(force) {
+  if (!force && (FUND || fundTried)) return FUND;
+  fundTried = true;
+  try {
+    const res = await fetch("data/fundamentals.json", { cache: "no-cache" });
+    if (res.ok) FUND = await res.json();
+  } catch {}
+  return FUND;
+}
+
+function canslimSettings() {
+  return {
+    cMin: clampInt($("cC").value, 0, 500, 25),
+    salesMin: clampInt($("cSales").value, -100, 500, 20),
+    salesOn: $("cSalesOn").checked,
+    aMin: clampInt($("cA").value, 0, 500, 25),
+    aUpAll: $("cAUp").checked,
+    roeMin: clampInt($("cRoe").value, -100, 200, 17),
+    iMin: clampInt($("cI").value, 0, 100, 5),
+    needFund: $("cNeedFund").checked,
+    rsMin: clampInt($("cRs").value, 1, 99, 80),
+    near: clampInt($("cNear").value, 1, 40, 15),
+    adOn: $("cAd").checked,
+    baseOnly: $("cBase").checked,
+    mOnly: $("cM").checked,
+    turn: Math.max(0, parseFloat($("cTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("cMinPrice").value) || 0),
+  };
+}
+
+function marketDirection(niftyMap) {
+  if (!niftyMap || niftyMap.size < 210) return null;
+  const keys = [...niftyMap.keys()].sort();
+  const C = keys.map(k => niftyMap.get(k));
+  const k = C.length - 1;
+  const s50 = smaAt(C, k, 50), s200 = smaAt(C, k, 200), e21 = emaSeries(C, 21)[k];
+  const close = C[k];
+  let state, cls;
+  if (close > s50 && s50 > s200 && close > e21) { state = "Confirmed uptrend"; cls = "up"; }
+  else if (close > s200) { state = "Uptrend under pressure"; cls = "warn"; }
+  else { state = "Market in correction"; cls = "down"; }
+  return { state, cls, close, s50, s200, date: keys[k] };
+}
+
+function analyseCanslim(c, cfg, niftyMap) {
+  const n = c.length;
+  if (n < 260) return null;
+  const C = c.map(x => x.close), H = c.map(x => x.high), V = c.map(x => x.volume);
+  const k = n - 1, close = C[k];
+  if (close < cfg.minPrice) return null;
+  const v50 = smaAt(V, k - 1, 50), v200 = smaAt(V, k - 1, 200);
+  if (close * v50 / 1e7 < cfg.turn) return null;
+  const s50 = smaAt(C, k, 50), s200 = smaAt(C, k, 200);
+  if (!(close > s50 && close > s200)) return null;                  // leaders trade above both
+  // N
+  let hi52 = -Infinity, hiIdx = -1;
+  for (let j = n - 252; j < n; j++) if (H[j] >= hi52) { hi52 = H[j]; hiIdx = j; }
+  const off52 = (1 - close / hi52) * 100;
+  if (off52 > cfg.near) return null;
+  const newHighDaysAgo = k - hiIdx;
+  const bases = findBases(c, { types: { flat: true, cup: true, dbl: true } }).filter(b => b.prior >= 20)
+    .filter(b => close >= b.pivot * 0.92 && close <= b.pivot * 1.05);
+  bases.sort((a, b) => Math.abs(close / a.pivot - 1) - Math.abs(close / b.pivot - 1));
+  const base = bases[0] || null;
+  const nOk = newHighDaysAgo <= 10 || !!base;
+  if (!nOk) return null;
+  if (cfg.baseOnly && !base) return null;
+  // S
+  const ad = adGrade(c);
+  if (cfg.adOn && !(ad.grade === "A" || ad.grade === "B")) return null;
+  const volX = v50 > 0 ? V[k] / v50 : 1;
+  // I (proxy)
+  const iProxy = (ad.grade === "A" || ad.grade === "B") && v50 > v200;
+  // pivot / plan
+  const pivot = base ? base.pivot : hi52;
+  const dist = (close / pivot - 1) * 100;
+  let status;
+  if (close > pivot && dist <= 5) status = volX >= 1.4 ? "Breakout on volume" : "In buy zone";
+  else if (dist > 5) status = "Extended";
+  else status = "Near pivot";
+  const buyPoint = Math.max(pivot, close > pivot ? close : pivot);
+  const stop = Math.max(buyPoint * 0.92, base ? base.stopRef * 0.995 : 0);
+  let rsNifty = null, rsLineHigh = null;
+  if (niftyMap && niftyMap.size) {
+    const n0 = niftyMap.get(ymd(c[k - 126].date)), n1 = niftyMap.get(ymd(c[k].date));
+    if (n0 && n1) rsNifty = ((C[k] / C[k - 126]) - (n1 / n0)) * 100;
+    const ratio = []; let lastN = null;
+    for (let j = k - 62; j <= k; j++) { const nv = niftyMap.get(ymd(c[j].date)) || lastN; if (nv) { lastN = nv; ratio.push(C[j] / nv); } }
+    if (ratio.length > 20) rsLineHigh = ratio[ratio.length - 1] >= Math.max(...ratio) * 0.995;
+  }
+  // C · A · I from the weekly fundamentals file
+  const f = FUND && FUND.data ? FUND.data[cfg._sym] : null;
+  const pct = v => (v === null || v === undefined ? null : Math.round(v * 1000) / 10);
+  const fund = f ? {
+    q: pct(f.qEps), qPrev: pct(f.qEpsPrev), rev: pct(f.qRev), a: pct(f.aCagr), aUp: f.aUp, aYears: f.aYears,
+    roe: pct(f.roe), inst: pct(f.inst), asOf: f.t, src: f.src || {},
+  } : null;
+  const fails = [];
+  if (!fund) { if (cfg.needFund) return null; }
+  else {
+    if (fund.q === null || fund.q < cfg.cMin) fails.push("C");
+    if (cfg.salesOn && (fund.rev === null || fund.rev < cfg.salesMin)) fails.push("C sales");
+    if (fund.a === null || fund.a < cfg.aMin || (cfg.aUpAll && fund.aYears && fund.aUp < fund.aYears)) fails.push("A");
+    if (fund.roe !== null && fund.roe < cfg.roeMin) fails.push("A ROE");
+    if (fund.inst === null || fund.inst < cfg.iMin) fails.push("I");
+    if (fails.length) return null;
+  }
+  return {
+    fund, accel: fund && fund.q !== null && fund.qPrev !== null ? fund.q > fund.qPrev : null,
+    mode: "canslim", close, date: ymd(c[k].date), pivot, zoneTop: pivot * 1.05, stop, stopPct: Math.round((1 - stop / buyPoint) * 1000) / 10,
+    status, dist: Math.round(dist * 10) / 10, base: base ? base.type : null, baseWeeks: base ? base.weeks : null,
+    newHighDaysAgo, off52: Math.round(off52 * 10) / 10, ad: ad.grade, adRatio: ad.ratio, volX: Math.round(volX * 100) / 100,
+    iProxy, volTrend: v200 > 0 ? Math.round(v50 / v200 * 100) / 100 : 1, rsScore: rsScoreOf(C),
+    rsNifty: rsNifty === null ? null : Math.round(rsNifty * 10) / 10, rsLineHigh,
+  };
+}
+
 /* ───────── Daily flag (VCPSwing "Trading Flags 101" playbook) ─────────
  * Scanning filters (his list): 1-month performance > 10%, price × 30-day avg volume > ₹10 Cr,
  * ATR(14) > 3%, price > 50% above the 52-week low, 10 EMA > 20 EMA > 50 EMA, price above 20 EMA.
@@ -1929,7 +2058,24 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "base") {
+  if (r.mode === "canslim") {
+    add("Status", r.status, r.status === "Breakout on volume" || r.status === "In buy zone" ? "up" : r.status === "Extended" ? "down" : "");
+    add("Pivot", `\u20B9${r.pivot.toFixed(2)}${r.base ? ` (${r.base})` : " (52-week high)"}`);
+    add("Buy zone", `\u20B9${r.pivot.toFixed(2)} \u2013 \u20B9${r.zoneTop.toFixed(2)}`);
+    add("Stop", `\u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`);
+    add("N", r.base ? `${r.base}, ${r.baseWeeks} weeks` : r.newHighDaysAgo === 0 ? "New 52-week high today" : `New 52-week high ${r.newHighDaysAgo} days ago`, "up");
+    add("S", `A/D ${r.ad} (up/down volume ${r.adRatio}) \u00B7 today ${r.volX}\u00D7 avg`, r.ad === "A" || r.ad === "B" ? "up" : "");
+    if (r.rsRank !== null) add("L", `RS Rating ${r.rsRank}${r.rsLineHigh ? " \u00B7 RS line at high" : ""}`, r.rsRank >= 80 ? "up" : "");
+    else if (r.rsNifty !== null) add("L", `vs Nifty 6M ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty}${r.rsLineHigh ? " \u00B7 RS line at high" : ""}`, r.rsNifty >= 0 ? "up" : "down");
+    if (r.fund) {
+      add(`C${r.fund.src.C ? ` (${r.fund.src.C === "NSE" ? "NSE official" : "Yahoo"})` : ""}`, `Quarterly EPS ${r.fund.q !== null ? (r.fund.q >= 0 ? "+" : "") + r.fund.q + "%" : "n/a"}${r.fund.qPrev !== null ? ` (prev ${r.fund.qPrev >= 0 ? "+" : ""}${r.fund.qPrev}%${r.accel ? ", accelerating" : ""})` : ""} \u00B7 sales ${r.fund.rev !== null ? (r.fund.rev >= 0 ? "+" : "") + r.fund.rev + "%" : "n/a"}`, "up");
+      add(`A${r.fund.src.A ? ` (${r.fund.src.A})` : ""}`, `Annual EPS ${r.fund.a !== null ? r.fund.a + "%/yr" : "n/a"}${r.fund.aYears ? ` \u00B7 up ${r.fund.aUp} of ${r.fund.aYears} years` : ""}${r.fund.roe !== null ? ` \u00B7 ROE ${r.fund.roe}%` : ""}`, "up");
+      add(`I${r.fund.src.I ? ` (${r.fund.src.I})` : ""}`, r.fund.inst !== null ? `${r.fund.inst}% held by institutions` : "n/a");
+    }
+    else add("I (proxy)", r.iProxy ? `Accumulating \u00B7 50/200-day volume ${r.volTrend}\u00D7` : `Not clear \u00B7 50/200-day volume ${r.volTrend}\u00D7`, r.iProxy ? "up" : "");
+    $("cwNote").textContent = `${r.fund ? `Earnings data as of ${r.fund.asOf}: quarterly results from ${r.fund.src.C === "NSE" ? "NSE filings (official)" : "Yahoo Finance"}${r.fund.src.A ? `, annual EPS / ROE / institutions from ${r.fund.src.A}` : ""}. Updated automatically every weekday evening.` : "No earnings data for this stock in the weekly file \u2014 check C & A on Screener.in."} M: ${$("vMarket").hidden ? "see the market line in the scanner" : $("vMarket").textContent}.`;
+    mark = { lines: [{ price: r.pivot, label: "Pivot", color: "rgb(18,140,51)" }, { price: r.zoneTop, label: "+5%", color: "rgb(234,88,12)" }, { price: r.stop, label: "Stop", color: "rgb(217,26,26)" }] };
+  } else if (r.mode === "base") {
     add("Base", `${r.type} \u00B7 ${r.weeks} weeks \u00B7 ${r.depth}% deep`, "up");
     add("Status", r.status, r.status === "Breakout on volume" || r.status === "In buy zone" ? "up" : r.status === "Extended" ? "down" : "");
     add("Pivot", `\u20B9${r.pivot.toFixed(2)}`);
@@ -2594,7 +2740,7 @@ async function runVcp() {
   if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
   const mode = $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
-  const cfg = mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -2613,30 +2759,47 @@ async function runVcp() {
   };
   upd();
   let nifty = null;
-  if (mode === "india" || mode === "vcp" || mode === "learned" || mode === "manas" || mode === "base") { $("vProgText").textContent = "Loading Nifty for relative strength\u2026"; nifty = await fetchNiftyMap(); upd(); }
+  if (mode === "india" || mode === "vcp" || mode === "learned" || mode === "manas" || mode === "base" || mode === "canslim") { $("vProgText").textContent = "Loading Nifty for relative strength\u2026"; nifty = await fetchNiftyMap(); upd(); }
   const allRs = [], tally = {};
+  let mkt = null;
+  if (mode === "canslim") {
+    await loadFundamentals(true);                    // updated daily by the GitHub Action
+    if (!FUND && cfg.needFund) {
+      vcpBusy = false;
+      $("vProgText").textContent = "Earnings data (data/fundamentals.json) isn\u2019t available yet. Run the \u201CUpdate fundamentals\u201D action on GitHub once, or untick \u201COnly stocks with earnings data\u201D.";
+      vcpUniverseLabels(); return;
+    }
+    mkt = marketDirection(nifty);
+    $("vMarket").hidden = !mkt;
+    if (mkt) { $("vMarket").className = `mkt ${mkt.cls}`; $("vMarket").textContent = `M \u00B7 ${mkt.state}: Nifty ${mkt.close.toFixed(0)} vs 50-day ${mkt.s50.toFixed(0)} / 200-day ${mkt.s200.toFixed(0)}${FUND ? ` \u00B7 earnings data ${FUND.updated.slice(0, 10)}` : ""}`; }
+    if (cfg.mOnly && mkt && mkt.cls !== "up") {
+      vcpBusy = false; $("vProgText").textContent = "Market is not in a confirmed uptrend \u2014 CAN SLIM says wait (switch off \u201COnly in a confirmed uptrend\u201D to scan anyway).";
+      vcpUniverseLabels(); return;
+    }
+  } else $("vMarket").hidden = true;
   await Promise.all(Array.from({ length: Math.min(3, u.symbols.length) }, async () => {
     while (i < u.symbols.length && !vcpStop) {
       const sym = u.symbols[i++];
       const c = await fetchDaily2y(sym);
       if (!c.length) noData++;
-      if ((mode === "vcp" || mode === "base") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
-      let r = c.length ? (mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
+      if (mode === "canslim") cfg._sym = sym;
+      let r = c.length ? (mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
       if ((mode === "vcp" || mode === "flag") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
       }
       if (r) { found.push({ symbol: sym, ...r }); if (c.length) livePrice[sym] = { close: r.close, date: r.date }; }
       done++; upd();
-      if (found.length && done % 10 === 0) { vcp = { results: sortVcp(mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : found), scanned: done, universe: u.name, at: Date.now(), mode }; renderVcp(); }
+      if (found.length && done % 10 === 0) { vcp = { results: sortVcp(mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : mode === "canslim" ? finalizeBase(found, allRs, { rsOn: true, rsMin: cfg.rsMin }) : found), scanned: done, universe: u.name, at: Date.now(), mode }; renderVcp(); }
     }
   }));
-  const finalList = mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : found;
+  const finalList = mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : mode === "canslim" ? finalizeBase(found, allRs, { rsOn: true, rsMin: cfg.rsMin }) : found;
   vcp = { results: sortVcp(finalList), scanned: done, universe: u.name, at: Date.now(), stopped: vcpStop, noData, mode, niftyOk: mode !== "india" || !!nifty, rsRanked: allRs.filter(x => x !== null).length >= 60 };
   try { localStorage.setItem(VCP_KEY, JSON.stringify(vcp)); } catch {}
   try { wakeLock?.release(); } catch {}
   vcpBusy = false;
-  $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${(mode === "vcp" || mode === "base") && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
+  $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${(mode === "vcp" || mode === "base" || mode === "canslim") && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
   if (mode === "vcp" || mode === "flag") {
     const RULES = mode === "flag" ? FLAG_RULES : VCP_RULES;
     const items = Object.entries(tally).filter(([k]) => k !== "ok").sort((a, b) => b[1] - a[1]);
@@ -2657,6 +2820,7 @@ async function runVcp() {
 const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
   ? (b.ib - a.ib) || (a.risk - b.risk)
   : a.mode === "rvol" ? (a.days - b.days) || (b.rvol - a.rvol)
+  : a.mode === "canslim" ? ((b.rsRank || 0) - (a.rsRank || 0)) || (Math.abs(a.dist) - Math.abs(b.dist))
   : a.mode === "base" ? (({ "Breakout on volume": 0, "In buy zone": 1, "Forming": 2, "Extended": 3 })[a.status] - ({ "Breakout on volume": 0, "In buy zone": 1, "Forming": 2, "Extended": 3 })[b.status]) || ((b.rsRank || 0) - (a.rsRank || 0)) || (Math.abs(a.dist) - Math.abs(b.dist))
   : a.mode === "flag" ? ((a.near ? 1 : 0) - (b.near ? 1 : 0)) || ((b.day1 ? 1 : 0) - (a.day1 ? 1 : 0)) || ((b.miniCoil ? 1 : 0) - (a.miniCoil ? 1 : 0)) || ((b.ib ? 1 : 0) - (a.ib ? 1 : 0)) || (a.risk - b.risk)
   : a.mode === "manas" ? ((a.risk > 3) - (b.risk > 3)) || ((b.rsLineHigh ? 1 : 0) - (a.rsLineHigh ? 1 : 0)) || (b.mom - a.mom)
@@ -2666,7 +2830,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -2681,6 +2845,35 @@ function renderVcp() {
     const row = document.createElement("div");
     row.className = "vrow"; row.tabIndex = 0; row.setAttribute("role", "button");
     row.setAttribute("aria-label", `Open ${r.symbol} chart`);
+    if (r.mode === "canslim") {
+      row.classList.add("irow");
+      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+      row.querySelector("b").textContent = r.symbol;
+      const tg = row.querySelector(".itags");
+      const tl = [
+        r.status,
+        `N: ${r.base ? r.base.toLowerCase() : r.newHighDaysAgo === 0 ? "new high today" : `new high ${r.newHighDaysAgo}d ago`}`,
+        `S: A/D ${r.ad}`,
+        r.rsRank !== null ? `L: RS ${r.rsRank}` : (r.rsNifty !== null ? `L: vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null),
+        r.fund && r.fund.q !== null ? `C: EPS ${r.fund.q >= 0 ? "+" : ""}${r.fund.q}%${r.accel ? " \u2191" : ""}${r.fund.src.C === "NSE" ? " \u2713NSE" : ""}` : null,
+        r.fund && r.fund.a !== null ? `A: ${r.fund.a}%/yr` : null,
+        r.fund && r.fund.inst !== null ? `I: ${r.fund.inst}% inst.` : (r.iProxy ? "I: accumulating*" : null),
+      ].filter(Boolean);
+      tl.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "Breakout on volume" ? " ib" : r.status === "Extended" ? " miss" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
+      const lnk = document.createElement("a");
+      lnk.href = `https://www.screener.in/company/${encodeURIComponent(r.symbol)}/consolidated/`;
+      lnk.target = "_blank"; lnk.rel = "noopener"; lnk.className = "tag clink"; lnk.textContent = r.fund ? "Financials \u2197" : "C & A: no data, check \u2197";
+      lnk.onclick = e => e.stopPropagation();
+      tg.appendChild(lnk);
+      row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 buy zone to \u20B9${r.zoneTop.toFixed(2)} \u00B7 stop \u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`;
+      const de = row.querySelector(".vdist");
+      de.textContent = r.dist >= 0 ? `${r.dist.toFixed(1)}% above pivot` : `${Math.abs(r.dist).toFixed(1)}% below pivot`;
+      if (r.dist >= 0 && r.dist <= 5) de.classList.add("up");
+      row.onclick = () => openChartWin(r.symbol, vcpSource());
+      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
+      box.appendChild(row);
+      continue;
+    }
     if (r.mode === "base") {
       row.classList.add("irow");
       row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
@@ -2807,7 +3000,12 @@ $("vScan").onclick = runVcp;
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim";
+  if (m === "canslim") {
+    $("vDesc").textContent = "Full CAN SLIM: C (quarterly EPS +25%, sales +20%), A (annual EPS growth 25%+/yr, rising each year, ROE 17%+), N (new high or base near pivot), S (accumulation A/B), L (RS Rating 80+), I (institutional holding 5%+) and M (Nifty trend on top). Earnings data updates itself every weekday evening (official NSE results first, Yahoo as backup).";
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    return;
+  }
   if (m === "base") {
     $("vDesc").textContent = "O\u2019Neil / CAN SLIM-style bases with a pivot: Flat base, Cup with handle, Double bottom \u2014 after a 30%+ run-up, above a rising 200-day, near the high. Shows the pivot, the 5% buy zone, a 7\u20138% stop, RS Rating (1\u201399) and A/D grade (A\u2013E). Price & volume only: check earnings separately.";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
@@ -2855,7 +3053,9 @@ $("vPdf").onclick = () => {
   generate(syms);
 };
 function scanItem(r) {
-        const note = r.mode === "base"
+        const note = r.mode === "canslim"
+          ? `CAN SLIM: pivot \u20B9${r.pivot.toFixed(2)}, stop \u20B9${r.stop.toFixed(2)}${r.rsRank !== null ? `, RS ${r.rsRank}` : ""}, A/D ${r.ad}${r.fund && r.fund.q !== null ? `, EPS +${r.fund.q}%` : ""}`
+          : r.mode === "base"
           ? `${r.type}: pivot \u20B9${r.pivot.toFixed(2)}, buy zone to \u20B9${r.zoneTop.toFixed(2)}, stop \u20B9${r.stop.toFixed(2)}${r.rsRank !== null ? `, RS ${r.rsRank}` : ""}, A/D ${r.ad}`
           : r.mode === "flag"
           ? `Flag (pole +${r.pole}%, ${r.flagDays}d): buy above \u20B9${r.trigger.toFixed(2)}, stop ${r.stopType} \u20B9${r.sl.toFixed(2)}`
@@ -2870,7 +3070,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {

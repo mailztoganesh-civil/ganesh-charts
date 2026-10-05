@@ -196,6 +196,9 @@
   .steps { padding-left: 20px; font-size: 14px; line-height: 1.5; }
   #syncToken { width: 100%; font: 15px Menlo, Consolas, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 8px; margin-top: 6px; }
   #syncStatus.err { color: var(--red); }
+  .mkt { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+  .mkt.up { background: #DCFCE7; color: #166534; } .mkt.warn { background: #FEF3C7; color: #92400E; } .mkt.down { background: #FEE2E2; color: #991B1B; }
+  .tag.clink { background: #E0E7FF; color: #3730A3; text-decoration: none; font-weight: 600; }
   .grade { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 4px; vertical-align: 2px; }
   .grade.gA { background: #DCFCE7; color: #166534; } .grade.gB { background: #E0E7FF; color: #3730A3; } .grade.gC { background: var(--bg); color: #555; }
   .tag.pd { background: #F3E8FF; color: #7E22CE; font-weight: 700; }
@@ -260,6 +263,7 @@
     <h2>Scanner</h2>
     <label class="vlab" for="vMode">Style</label>
     <select id="vMode" class="vsel">
+      <option value="canslim">CAN SLIM (full: C·A·N·S·L·I·M)</option>
       <option value="base">Base patterns with a pivot (Cup / Flat / Double bottom)</option>
       <option value="flag">Daily flag (VCPSwing playbook)</option>
       <option value="manas">Manas Arora setups (from his posted trades)</option>
@@ -312,6 +316,22 @@
         <label><input type="checkbox" id="rTrend" checked> Close &gt; 21 EMA &gt; 50 EMA</label>
         <label>Min 20-day turnover ₹ <input type="number" id="rTurn" value="5" min="0"> Cr</label>
         <label>Min price ₹ <input type="number" id="rMinPrice" value="20" min="0"></label>
+      </div>
+      <div class="vgrid" id="setCanslim" hidden>
+        <label>C: quarterly EPS growth ≥ <input type="number" id="cC" value="25" min="0"> %</label>
+        <label><input type="checkbox" id="cSalesOn" checked> C: sales growth ≥ <input type="number" id="cSales" value="20"> %</label>
+        <label>A: annual EPS growth ≥ <input type="number" id="cA" value="25" min="0"> % a year</label>
+        <label><input type="checkbox" id="cAUp" checked> A: EPS up every year</label>
+        <label>A: ROE ≥ <input type="number" id="cRoe" value="17"> %</label>
+        <label>I: institutions hold ≥ <input type="number" id="cI" value="5" min="0" max="100"> %</label>
+        <label><input type="checkbox" id="cNeedFund" checked> Only stocks with earnings data</label>
+        <label>RS Rating ≥ <input type="number" id="cRs" value="80" min="1" max="99"></label>
+        <label>Within <input type="number" id="cNear" value="15" min="1" max="40"> % of 52-week high</label>
+        <label><input type="checkbox" id="cAd" checked> S: A/D grade A or B only</label>
+        <label><input type="checkbox" id="cBase"> Only stocks in a proper base (cup / flat / double bottom)</label>
+        <label><input type="checkbox" id="cM"> Only scan when the market is in a confirmed uptrend</label>
+        <label>Min 50-day turnover ₹ <input type="number" id="cTurn" value="5" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="cMinPrice" value="20" min="0"></label>
       </div>
       <div class="vgrid" id="setBase" hidden>
         <label><input type="checkbox" id="bCup" checked> Cup with handle</label>
@@ -376,6 +396,7 @@
       <p class="small" id="vProgText"></p>
     </div>
     <details class="vwhy" id="vWhy" hidden><summary>Why stocks were filtered out</summary><ul id="vWhyList"></ul><p class="small">Each stock is counted under every rule it failed. Loosen the top rules in Scan settings to get more results.</p></details>
+    <p class="mkt" id="vMarket" hidden></p>
     <p class="small" id="vSummary"></p>
     <div id="vResults"></div>
     <div class="vact" id="vActions" hidden>
@@ -483,7 +504,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 33 · protected storage</p>
+  <p class="small" style="text-align:center">Version 36 · CAN SLIM with official NSE results</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -538,8 +559,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=33"></script>
-<script src="app.js?v=33"></script>
+<script src="symbols.js?v=36"></script>
+<script src="app.js?v=36"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
