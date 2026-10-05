@@ -1072,7 +1072,23 @@ async function fetchOHLC(symbol, range, interval, tries = 3) {
 
 async function fetchCandles(symbol, interval) {
   const range = rangeFor(interval, interval === "W" ? weeklyBars() : dailyBars());
-  return fetchOHLC(symbol, range, interval === "W" ? "1wk" : "1d");
+  const c = await fetchOHLC(symbol, range, interval === "W" ? "1wk" : "1d");
+  return interval === "W" ? mergeWeeks(c) : c;
+}
+// Yahoo sometimes returns the current week twice (a weekly bar plus today's bar): merge bars
+// that fall in the same Monday-to-Sunday week so the last weekly bar and its change are right
+function mergeWeeks(c) {
+  const wk = d => { const x = new Date(d); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return ymd(x); };
+  const out = [];
+  for (const b of c) {
+    const prev = out[out.length - 1];
+    if (prev && wk(prev.date) === wk(b.date)) {
+      prev.high = Math.max(prev.high, b.high); prev.low = Math.min(prev.low, b.low);
+      prev.close = b.close;
+      prev.volume = Math.max(prev.volume, b.volume);
+    } else out.push({ ...b });
+  }
+  return out;
 }
 
 function sma(candles, period) {
@@ -1218,20 +1234,15 @@ function drawMSChart(canvas, symbol, interval, candles, bars, mark) {
     ctx.stroke();
   }
 
-  // level lines from scans / watchlists
-  if (mark && mark.lines) for (const l of mark.lines) {
-    if (!(l.price > lo && l.price < hi)) continue;
+  // level lines from scans / watchlists: dashed line across the chart; the value goes on the
+  // price axis and the name in the legend row, so nothing is written over the bars
+  const levels = [];
+  if (mark && mark.lines) for (const l of mark.lines) if (l.price > lo && l.price < hi) levels.push({ price: l.price, label: l.label, color: l.color });
+  if (mark && mark.price && mark.price > lo && mark.price < hi) levels.push({ price: mark.price, label: mark.label || "Added", color: "rgb(124,58,237)" });
+  for (const l of levels) {
     const y = Y(l.price);
     ctx.save(); ctx.strokeStyle = l.color; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke(); ctx.restore();
-    ctx.font = `bold 9px ${FONT}`; ctx.fillStyle = l.color; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
-    ctx.fillText(`${l.label} ${l.price.toFixed(2)}`, R - 2, y - 1);
-  }
-  if (mark && mark.price && mark.price > lo && mark.price < hi) {
-    const y = Y(mark.price);
-    ctx.save(); ctx.strokeStyle = "rgba(124,58,237,0.9)"; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke(); ctx.restore();
-    ctx.font = `bold 9px ${FONT}`; ctx.fillStyle = "rgb(124,58,237)"; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
-    ctx.fillText(`${mark.label || "Added"} ${mark.price.toFixed(2)}`, R - 2, y - 1);
   }
 
   // last price box + MA value boxes on the axis
@@ -1239,11 +1250,13 @@ function drawMSChart(canvas, symbol, interval, candles, bars, mark) {
   // axis value boxes (MAs + last price), nudged apart so they never overlap
   const boxes = [];
   for (const [arr, col] of ma) { const v = maVal(arr, candles.length - 1); if (v && isFinite(v) && v > lo && v < hi) boxes.push({ v, y: Y(v), bg: col, fg: col === "#F5B800" ? "#000" : "#fff" }); }
+  for (const l of levels) boxes.push({ v: l.price, y: Y(l.price), bg: "#fff", fg: l.color, border: l.color });
   boxes.push({ v: last.close, y: Y(last.close), bg: "#000", fg: "#fff", main: true });
   boxes.sort((a, b) => a.y - b.y);
   for (let i = 1; i < boxes.length; i++) if (boxes[i].y - boxes[i - 1].y < 15) boxes[i].y = boxes[i - 1].y + 15;
   for (const b of boxes.filter(b => !b.main).concat(boxes.filter(b => b.main))) {
     ctx.fillStyle = b.bg; ctx.fillRect(R + 1, b.y - 7, CW - R - 2, 14);
+    if (b.border) { ctx.strokeStyle = b.border; ctx.lineWidth = 1; ctx.setLineDash([]); ctx.strokeRect(R + 1.5, b.y - 6.5, CW - R - 3, 13); }
     ctx.fillStyle = b.fg; ctx.font = `bold 10px ${FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
     ctx.fillText(b.v >= 1000 ? b.v.toFixed(1) : b.v.toFixed(2), R + 5, b.y);
   }
@@ -1265,6 +1278,13 @@ function drawMSChart(canvas, symbol, interval, candles, bars, mark) {
   ctx.font = `9px ${FONT}`; let lx = L;
   const maNames = interval === "W" ? ["10W", "40W"] : ["21 EMA", "50 SMA", "200 SMA"];
   ma.forEach(([, col], i) => { ctx.fillStyle = col; ctx.fillRect(lx, 23, 12, 2); ctx.fillStyle = "#666"; ctx.fillText(maNames[i], lx + 15, 24); lx += 15 + ctx.measureText(maNames[i]).width + 10; });
+  for (const l of levels) {
+    ctx.save(); ctx.strokeStyle = l.color; ctx.setLineDash([3, 2]); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(lx, 24); ctx.lineTo(lx + 12, 24); ctx.stroke(); ctx.restore();
+    const t = `${l.label} ${l.price.toFixed(2)}`;
+    ctx.fillStyle = l.color; ctx.font = `bold 9px ${FONT}`; ctx.fillText(t, lx + 15, 24);
+    lx += 15 + ctx.measureText(t).width + 10; ctx.font = `9px ${FONT}`;
+  }
 
   // volume panel
   const V = candles.map(x => x.volume);
