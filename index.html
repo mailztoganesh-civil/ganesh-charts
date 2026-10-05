@@ -62,6 +62,10 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chips button { border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 4px 11px; font: 13px -apple-system, Helvetica, Arial, sans-serif; color: #111; cursor: pointer; }
   .chips button[aria-pressed=true] { background: var(--navy); border-color: var(--navy); color: #fff; }
+  .stylebox { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .stylelab { font-size: 13px; font-weight: 600; color: var(--sec); }
+  .cwr { display: flex; gap: 6px; align-items: center; }
+  #cwStyle { font: 13px -apple-system, Helvetica, Arial, sans-serif; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: #111; }
   .pdbox { border-bottom: 1px solid var(--line); padding: 10px 0 12px; margin-bottom: 4px; }
   .pdon { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
   .pdon input { width: 20px; height: 20px; accent-color: rgb(147,51,234); }
@@ -436,6 +440,13 @@
         </div>
       </div>
     </div>
+    <div class="stylebox">
+      <span class="stylelab">Chart style</span>
+      <div class="chips stylechips" role="group" aria-label="Chart style">
+        <button type="button" data-style="classic" aria-pressed="true">Classic candles</button>
+        <button type="button" data-style="ms" aria-pressed="false">MarketSmith-style bars</button>
+      </div>
+    </div>
     <div class="pdbox">
       <label class="pdon"><input type="checkbox" id="pdOn" checked> <span class="pddot"></span> Purple dots on all charts</label>
       <div class="pdopts" id="pdOpts">
@@ -504,7 +515,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 36 · CAN SLIM with official NSE results</p>
+  <p class="small" style="text-align:center">Version 37 · MarketSmith-style charts</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -516,7 +527,7 @@
     <button type="button" id="cwNext" class="solid" aria-label="Next stock"><span class="wide">Next </span>›</button>
   </div>
   <div id="cwBody">
-    <div class="cwfresh"><span id="cwFresh"></span><button type="button" class="wbtn" id="cwRefresh">↻ Refresh</button></div>
+    <div class="cwfresh"><span id="cwFresh"></span><span class="cwr"><select id="cwStyle" aria-label="Chart style"><option value="classic">Candles</option><option value="ms">MarketSmith</option></select><button type="button" class="wbtn" id="cwRefresh">↻ Refresh</button></span></div>
     <div id="cwInfo"></div>
     <p id="cwNote"></p>
     <p id="cwStatus" hidden></p>
@@ -559,8 +570,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=36"></script>
-<script src="app.js?v=36"></script>
+<script src="symbols.js?v=37"></script>
+<script src="app.js?v=37"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

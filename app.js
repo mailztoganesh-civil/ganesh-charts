@@ -107,12 +107,12 @@ function approx(n, perYear) {
 function barHints() {
   $("dHint").textContent = approx(dailyBars(), 250);
   $("wHint").textContent = approx(weeklyBars(), 52);
-  document.querySelectorAll(".chips button").forEach(b => {
+  document.querySelectorAll(".chips:not(.stylechips) button").forEach(b => {
     const inp = $(b.parentElement.dataset.for);
     b.setAttribute("aria-pressed", String(parseInt(inp.value, 10) === +b.dataset.v));
   });
 }
-document.querySelectorAll(".chips button").forEach(b => {
+document.querySelectorAll(".chips:not(.stylechips) button").forEach(b => {
   b.onclick = () => { $(b.parentElement.dataset.for).value = b.dataset.v; barHints(); saveSettings(); };
 });
 $("dBars").oninput = $("wBars").oninput = barHints;
@@ -923,6 +923,18 @@ function analyseLearned(c, niftyMap, cfg) {
   };
 }
 
+/* ───────── Chart style ───────── */
+function setChartStyle(v) {
+  try { localStorage.setItem("gc:chartStyle", v); } catch {}
+  document.querySelectorAll("[data-style]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.style === v)));
+  if ($("cwStyle")) $("cwStyle").value = v;
+  if (v === "ms") loadFundamentals();
+  if (!$("chartWin").hidden) showChartAt(cwIndex);
+}
+document.querySelectorAll("[data-style]").forEach(b => (b.onclick = () => setChartStyle(b.dataset.style)));
+$("cwStyle").onchange = () => setChartStyle($("cwStyle").value);
+setChartStyle(chartStyle());
+
 /* ───────── Purple dot settings ───────── */
 ["pdOn", "pdDay", "pdWeek", "pdRvol", "pdMinVol"].forEach(id => {
   $(id).addEventListener("change", () => { saveSettings(); $("pdOpts").hidden = !$("pdOn").checked; });
@@ -1116,6 +1128,222 @@ function purpleDotIdx(candles, from, interval, cfg) {
     if (cnt > look) { sum -= candles[i - look].volume; cnt--; }
   }
   return out;
+}
+
+/* ───────── MarketSmith-style chart (alternative template) ─────────
+ * OHLC bars (blue = close up, magenta = close down), log price scale, 21 EMA (pink) / 50 SMA
+ * (yellow) / 200 SMA (purple) on daily — 10 / 40 week on weekly, volume bars (blue up, grey down,
+ * white dot on heavy up-volume days), volume stats (Avg ₹Vol, RVol, U/D Vol) and a quarterly
+ * results table (PAT, Sales, YoY / QoQ, OPM%) from the weekly fundamentals file. */
+function chartStyle() { try { return localStorage.getItem("gc:chartStyle") || "classic"; } catch { return "classic"; } }
+function drawAnyChart(canvas, symbol, interval, candles, bars, mark) {
+  return chartStyle() === "ms" ? drawMSChart(canvas, symbol, interval, candles, bars, mark) : drawChart(canvas, symbol, interval, candles, bars, mark);
+}
+
+function fmtCr(v) {
+  if (v === null || v === undefined || !isFinite(v)) return "\u2013";
+  const a = Math.abs(v);
+  return a >= 1000 ? Math.round(v).toLocaleString("en-IN") : a >= 100 ? v.toFixed(0) : a >= 10 ? v.toFixed(1) : v.toFixed(2);
+}
+function fmtVolMS(v) { return v >= 1e7 ? (v / 1e6).toFixed(0) + "M" : v >= 1e6 ? (v / 1e6).toFixed(2) + "M" : v >= 1e3 ? (v / 1e3).toFixed(1) + "K" : String(Math.round(v)); }
+
+function drawMSChart(canvas, symbol, interval, candles, bars, mark) {
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+  const BLUE = "#2B5BFF", MAG = "#F21FCF", GREY = "#5F6368";
+  const L = 8, R = CW - 62, T = 30, PB = 330, VT = 338, VB = 424, DB = 440;
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, CW, CH);
+  const start = Math.max(0, candles.length - bars);
+  const dc = candles.slice(start);
+  const f = (typeof FUND !== "undefined" && FUND && FUND.data) ? FUND.data[symbol] : null;
+  if (!dc.length) {
+    ctx.font = `bold 16px ${FONT}`; ctx.fillStyle = "gray"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(`No data for ${symbol}`, CW / 2, CH / 2);
+    return false;
+  }
+  const C = candles.map(x => x.close), n = dc.length;
+  const ma = interval === "W"
+    ? [[emaSeries(C, 10), "#F472D0"], [sma(candles, 40), "#5B4CF0"]]
+    : [[emaSeries(C, 21), "#F472D0"], [sma(candles, 50), "#F5B800"], [sma(candles, 200), "#5B4CF0"]];
+  const maVal = (arr, i) => Array.isArray(arr) ? arr[i] : arr[i];
+  // log price scale incl. visible MA values
+  let hi = -Infinity, lo = Infinity;
+  dc.forEach((x, i) => { hi = Math.max(hi, x.high); lo = Math.min(lo, x.low); });
+  for (const [arr] of ma) for (let i = start; i < candles.length; i++) { const v = maVal(arr, i); if (v && isFinite(v)) { hi = Math.max(hi, v); lo = Math.min(lo, v); } }
+  if (mark && mark.lines) for (const l of mark.lines) if (l.price > 0 && l.price < hi * 1.15 && l.price > lo * 0.85) { hi = Math.max(hi, l.price); lo = Math.min(lo, l.price); }
+  hi *= 1.04; lo *= 0.96;
+  const lh = Math.log(hi), ll = Math.log(lo);
+  const Y = p => T + (lh - Math.log(p)) / (lh - ll) * (PB - T);
+  const sp = (R - L) / (n + 3), X = i => L + sp * (i + 0.5);
+  const tick = Math.max(1.2, Math.min(4, sp * 0.38));
+
+  // grid + right price axis (nice log ticks)
+  ctx.font = `10px ${FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  const steps = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 8, 10];
+  const ticks = [];
+  for (let e = Math.floor(Math.log10(lo)) - 1; e <= Math.ceil(Math.log10(hi)); e++)
+    for (const st of steps) { const v = st * Math.pow(10, e); if (v >= lo && v <= hi) ticks.push(v); }
+  const minGap = 16; let lastY = Infinity;
+  for (const v of ticks.sort((a, b) => b - a)) {
+    const y = Y(v);
+    if (Math.abs(y - lastY) < minGap) continue;
+    lastY = y;
+    ctx.strokeStyle = "#F1F3F6"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke();
+    ctx.fillStyle = "#333"; ctx.fillText(v >= 1000 ? v.toLocaleString("en-IN") : v >= 100 ? v.toFixed(1) : v.toFixed(2), R + 6, y);
+  }
+
+  // moving averages
+  for (const [arr, col] of ma) {
+    ctx.strokeStyle = col; ctx.lineWidth = 1.1; ctx.beginPath();
+    let on = false;
+    for (let i = 0; i < n; i++) {
+      const v = maVal(arr, start + i);
+      if (!v || !isFinite(v)) continue;
+      on ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)); on = true;
+    }
+    ctx.stroke();
+  }
+
+  // OHLC bars (colour by close vs previous close)
+  ctx.lineWidth = Math.max(1.3, Math.min(2.6, sp * 0.22));
+  for (let i = 0; i < n; i++) {
+    const x = dc[i], prev = start + i > 0 ? candles[start + i - 1].close : x.open;
+    ctx.strokeStyle = x.close >= prev ? BLUE : MAG;
+    const cx = X(i);
+    ctx.beginPath();
+    ctx.moveTo(cx, Y(x.high)); ctx.lineTo(cx, Y(x.low));
+    ctx.moveTo(cx - tick, Y(x.open)); ctx.lineTo(cx, Y(x.open));
+    ctx.moveTo(cx, Y(x.close)); ctx.lineTo(cx + tick, Y(x.close));
+    ctx.stroke();
+  }
+
+  // level lines from scans / watchlists
+  if (mark && mark.lines) for (const l of mark.lines) {
+    if (!(l.price > lo && l.price < hi)) continue;
+    const y = Y(l.price);
+    ctx.save(); ctx.strokeStyle = l.color; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke(); ctx.restore();
+    ctx.font = `bold 9px ${FONT}`; ctx.fillStyle = l.color; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+    ctx.fillText(`${l.label} ${l.price.toFixed(2)}`, R - 2, y - 1);
+  }
+  if (mark && mark.price && mark.price > lo && mark.price < hi) {
+    const y = Y(mark.price);
+    ctx.save(); ctx.strokeStyle = "rgba(124,58,237,0.9)"; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke(); ctx.restore();
+    ctx.font = `bold 9px ${FONT}`; ctx.fillStyle = "rgb(124,58,237)"; ctx.textAlign = "right"; ctx.textBaseline = "bottom";
+    ctx.fillText(`${mark.label || "Added"} ${mark.price.toFixed(2)}`, R - 2, y - 1);
+  }
+
+  // last price box + MA value boxes on the axis
+  const last = dc[n - 1];
+  // axis value boxes (MAs + last price), nudged apart so they never overlap
+  const boxes = [];
+  for (const [arr, col] of ma) { const v = maVal(arr, candles.length - 1); if (v && isFinite(v) && v > lo && v < hi) boxes.push({ v, y: Y(v), bg: col, fg: col === "#F5B800" ? "#000" : "#fff" }); }
+  boxes.push({ v: last.close, y: Y(last.close), bg: "#000", fg: "#fff", main: true });
+  boxes.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < boxes.length; i++) if (boxes[i].y - boxes[i - 1].y < 15) boxes[i].y = boxes[i - 1].y + 15;
+  for (const b of boxes.filter(b => !b.main).concat(boxes.filter(b => b.main))) {
+    ctx.fillStyle = b.bg; ctx.fillRect(R + 1, b.y - 7, CW - R - 2, 14);
+    ctx.fillStyle = b.fg; ctx.font = `bold 10px ${FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(b.v >= 1000 ? b.v.toFixed(1) : b.v.toFixed(2), R + 5, b.y);
+  }
+
+  // title line
+  const prevC = n > 1 ? dc[n - 2].close : last.open, chg = last.close - prevC;
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.font = `bold 12px ${FONT}`; ctx.fillStyle = "#111";
+  const name = (f && f.name && !/\.NS$/.test(f.name) ? f.name : symbol);
+  const head = `${name} \u00B7 ${interval === "W" ? "1W" : "1D"} \u00B7 NSE`;
+  ctx.fillText(head, L, 12);
+  let x0 = L + ctx.measureText(head).width + 10;
+  ctx.font = `11px ${FONT}`;
+  const ohlc = [["O", last.open], ["H", last.high], ["L", last.low], ["C", last.close]];
+  for (const [k, v] of ohlc) { ctx.fillStyle = "#555"; ctx.fillText(k, x0, 12); x0 += 8; ctx.fillStyle = chg >= 0 ? BLUE : MAG; const t = v.toFixed(2); ctx.fillText(t, x0, 12); x0 += ctx.measureText(t).width + 6; }
+  ctx.fillStyle = chg >= 0 ? BLUE : MAG;
+  ctx.fillText(`${chg >= 0 ? "+" : ""}${chg.toFixed(2)} (${chg >= 0 ? "+" : ""}${(chg / prevC * 100).toFixed(2)}%)`, x0, 12);
+  // MA legend line
+  ctx.font = `9px ${FONT}`; let lx = L;
+  const maNames = interval === "W" ? ["10W", "40W"] : ["21 EMA", "50 SMA", "200 SMA"];
+  ma.forEach(([, col], i) => { ctx.fillStyle = col; ctx.fillRect(lx, 23, 12, 2); ctx.fillStyle = "#666"; ctx.fillText(maNames[i], lx + 15, 24); lx += 15 + ctx.measureText(maNames[i]).width + 10; });
+
+  // volume panel
+  const V = candles.map(x => x.volume);
+  const vis = dc.map(x => x.volume), vmax = Math.max(...vis) || 1;
+  const avg50 = i => { let s = 0, c = 0; for (let j = Math.max(0, i - 50); j < i; j++) { s += V[j]; c++; } return c ? s / c : 0; };
+  for (let i = 0; i < n; i++) {
+    const gi = start + i, x = dc[i], prev = gi > 0 ? candles[gi - 1].close : x.open;
+    const up = x.close >= prev, h = (x.volume / vmax) * (VB - VT - 4);
+    const heavy = up && x.volume >= 2 * avg50(gi);
+    ctx.fillStyle = up ? (heavy ? "#4DA3FF" : "#3D6CF0") : (x.close < prev ? "#9AA0A6" : GREY);
+    if (!up) ctx.fillStyle = "#6E7378";
+    ctx.fillRect(X(i) - Math.max(1, sp * 0.35), VB - h, Math.max(1.5, sp * 0.7), h);
+    if (heavy && h > 10) { ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(X(i), VB - h + 6, Math.max(1.6, Math.min(3, sp * 0.3)), 0, Math.PI * 2); ctx.fill(); }
+  }
+  ctx.fillStyle = "#444"; ctx.font = `9px ${FONT}`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillText(fmtVolMS(vmax), R + 6, VT + 6);
+  ctx.fillText(fmtVolMS(last.volume), R + 6, VB - 6);
+  // volume stats box (as on MarketSmith charts)
+  const k = candles.length - 1;
+  let tv = 0, tc = 0, up = 0, dn = 0;
+  for (let j = Math.max(1, k - 49); j <= k; j++) {
+    tv += candles[j].close * candles[j].volume; tc++;
+    if (candles[j].close > candles[j - 1].close) up += candles[j].volume; else if (candles[j].close < candles[j - 1].close) dn += candles[j].volume;
+  }
+  const a50 = avg50(k);
+  const stats = [`Avg\u20B9Vol: ${fmtCr(tv / tc / 1e7)} Cr`, `RVol: ${a50 ? Math.round(last.volume / a50 * 100) : 0} %`, `U/D Vol: ${dn ? (up / dn).toFixed(1) : "\u2013"}`];
+  let sx = L + 2;
+  ctx.font = `9px ${FONT}`;
+  for (const t of stats) {
+    const w = ctx.measureText(t).width + 10;
+    ctx.fillStyle = "#E8F5E9"; ctx.fillRect(sx, VT - 2, w, 13);
+    ctx.fillStyle = "#1B5E20"; ctx.fillText(t, sx + 5, VT + 4.5);
+    sx += w + 4;
+  }
+  // separator + date axis
+  ctx.strokeStyle = "#DADCE0"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(L, PB + 4); ctx.lineTo(R, PB + 4); ctx.moveTo(R, T - 4); ctx.lineTo(R, VB); ctx.stroke();
+  ctx.fillStyle = "#555"; ctx.font = `9px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "top";
+  let lastLbl = -100;
+  for (let i = 1; i < n; i++) {
+    const a = dc[i].date, b = dc[i - 1].date;
+    const newPeriod = interval === "W" ? a.getMonth() !== b.getMonth() && (a.getMonth() % 3 === 0) : a.getMonth() !== b.getMonth();
+    if (!newPeriod || X(i) - lastLbl < 34) continue;
+    lastLbl = X(i);
+    const lbl = a.getMonth() === 0 ? String(a.getFullYear()) : MON[a.getMonth()];
+    ctx.fillText(lbl, X(i), VB + 4);
+  }
+
+  // quarterly results table (bottom-right of the price panel)
+  const qt = f && Array.isArray(f.qTable) ? f.qTable.slice(-5).reverse() : null;
+  if (qt && qt.length) {
+    const cols = [["FQ", 34], ["PAT", 32], ["YoY", 34], ["QoQ", 34], ["Sales", 38], ["YoY", 34], ["QoQ", 32], ["OPM%", 30]];
+    const tw = cols.reduce((a, c) => a + c[1], 0) + 8, rh = 11;
+    const th = rh * (qt.length + 3) + 6;
+    const tx = R - tw - 4, ty = PB - th - 4;
+    ctx.fillStyle = "rgba(255,255,255,0.94)"; ctx.fillRect(tx, ty, tw, th);
+    ctx.strokeStyle = "#E3E6EC"; ctx.strokeRect(tx, ty, tw, th);
+    ctx.font = `8px ${FONT}`; ctx.textBaseline = "middle"; ctx.textAlign = "center"; ctx.fillStyle = "#555";
+    const headTxt = [f.mcap ? `mcap ${fmtCr(f.mcap)} Cr` : null, f.ff ? `ff ${fmtCr(f.ff)} Cr` : null, f.listed ? `listed ${f.listed}` : null].filter(Boolean).join("  |  ");
+    ctx.fillText(headTxt || symbol, tx + tw / 2, ty + 7);
+    ctx.fillText([f.sector, f.industry].filter(Boolean).join("  |  "), tx + tw / 2, ty + 7 + rh);
+    let cx = tx + 4;
+    const hy = ty + 7 + rh * 2;
+    for (const [h, w] of cols) { ctx.fillStyle = "#333"; ctx.fillText(h, cx + w / 2, hy); cx += w; }
+    const pctTxt = v => v === null || v === undefined || !isFinite(v) ? "\u2013" : `${v >= 0 ? "+" : ""}${Math.round(v)}%`;
+    qt.forEach((q, r) => {
+      const y = hy + rh * (r + 1);
+      const d = new Date(q.d + "T00:00:00");
+      const vals = [`${MON[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`, fmtCr(q.pat), pctTxt(q.patYoY), pctTxt(q.patQoQ), fmtCr(q.sales), pctTxt(q.salesYoY), pctTxt(q.salesQoQ), q.opm === null || q.opm === undefined ? "\u2013" : `${q.opm >= 0 ? "+" : ""}${Math.round(q.opm)}%`];
+      let x = tx + 4;
+      vals.forEach((v, ci) => {
+        const isPct = ci === 2 || ci === 3 || ci === 5 || ci === 6;
+        ctx.fillStyle = isPct && v !== "\u2013" ? (v.startsWith("-") ? MAG : BLUE) : "#222";
+        ctx.fillText(v, x + cols[ci][1] / 2, y);
+        x += cols[ci][1];
+      });
+    });
+  }
+  return true;
 }
 
 function drawChart(canvas, symbol, interval, candles, bars, mark) {
@@ -1934,6 +2162,7 @@ let cwSrc = null;
 const watchSource = () => ({ kind: "watch", name: activeList().name, symbols: watchOrder, item: sym => activeList().items.find(x => x.symbol === sym) || { symbol: sym } });
 
 function openChartWin(sym, source) {
+  if (chartStyle() === "ms" && !FUND) loadFundamentals().then(() => { if (!$("chartWin").hidden) showChartAt(cwIndex); });
   cwSrc = source || watchSource();
   if (!cwSrc.symbols.length) return;
   cwIndex = Math.max(0, cwSrc.symbols.indexOf(sym));
@@ -2008,7 +2237,7 @@ async function showChartAt(i, force) {
   for (const [id, iv, c, bars] of [["cwDaily", "D", data.d, dailyBars()], ["cwWeekly", "W", data.w, weeklyBars()]]) {
     const cv = $(id);
     cv.width = CW * SCALE; cv.height = CH * SCALE;
-    drawChart(cv, sym, iv, c, bars, mark);
+    drawAnyChart(cv, sym, iv, c, bars, mark);
   }
   $("cwStatus").hidden = !(data.d.length === 0 && data.w.length === 0);
   $("cwStatus").textContent = noDataMsg(sym);
@@ -2184,7 +2413,7 @@ async function showVcpAt(sym, n, force) {
   for (const [id, iv, c, bars] of [["cwDaily", "D", data.d, dailyBars()], ["cwWeekly", "W", data.w, weeklyBars()]]) {
     const cv = $(id);
     cv.width = CW * SCALE; cv.height = CH * SCALE;
-    drawChart(cv, sym, iv, c, bars, mark);
+    drawAnyChart(cv, sym, iv, c, bars, mark);
   }
   $("cwStatus").hidden = !(data.d.length === 0 && data.w.length === 0);
   $("cwStatus").textContent = noDataMsg(sym);
@@ -2224,6 +2453,7 @@ $("clearSaved").onclick = async () => {
  */
 $("go").onclick = () => generate();
 async function generate(override) {
+  if (chartStyle() === "ms") await loadFundamentals();
   const stocks = override || filteredStocks();
   if (!stocks.length || state.busy) return;
   state.busy = true; refresh();
@@ -2259,9 +2489,9 @@ async function generate(override) {
         const lastD = d.length ? d[d.length - 1] : null;
         pageStocks.push(s);
         pageCloses.push(lastD ? { close: lastD.close, date: ymd(lastD.date) } : null);
-        const okD = drawChart(canvas, s, "D", d, dBarsN);
+        const okD = drawAnyChart(canvas, s, "D", d, dBarsN);
         const di = canvas.toDataURL("image/jpeg", 0.85);
-        const okW = drawChart(canvas, s, "W", w, wBarsN);
+        const okW = drawAnyChart(canvas, s, "W", w, wBarsN);
         const wi = canvas.toDataURL("image/jpeg", 0.85);
         if (!okD && !okW) noData.push(s);
         if (!first) doc.addPage([PW, PH], "portrait");
