@@ -657,6 +657,146 @@ function analyseManas(c, niftyMap, cfg) {
   };
 }
 
+/* ───────── Manas Arora entry: "strong start" (from 33 of his marked entries, Jun–Oct 2026) ─────────
+ * Every marked entry (purple ▲ under the candle) is the same day:
+ *  • it opens at or just above the prior close and hardly trades below the open (open ≈ low),
+ *  • then rises 2–10% through the prior day's high and closes strong,
+ *  • after a short quiet pullback / pause of a few days, close to the recent high, in an uptrend
+ *    (often right off the 21 EMA).
+ * Stop = the entry day's low (LOD), which is where the ▲ sits. */
+function startSettings() {
+  return {
+    when: $("sWhen").value,                                        // today | 3 | 5 | ready
+    minChg: Math.max(0, parseFloat($("sChg").value) || 0),
+    olMax: Math.max(0.1, parseFloat($("sOL").value) || 2),
+    near: clampInt($("sNear").value, 1, 60, 15),
+    mom: clampInt($("sMom").value, 0, 300, 25),
+    vol: Math.max(0, parseFloat($("sVol").value) || 0),
+    pbMax: clampInt($("sDepth").value, 3, 50, 25),
+    needHigh: $("sHigh").checked,
+    turn: Math.max(0, parseFloat($("sTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("sMinPrice").value) || 0),
+  };
+}
+
+// Context on the bars before day k: uptrend, near the high, after a pause/pullback
+function startContext(c, k, cfg, e21, e50) {
+  const H = c.map(x => x.high), L = c.map(x => x.low), C = c.map(x => x.close);
+  if (k < 25) return null;
+  // highest high of the 15 bars before k, and how many bars ago it was
+  let pk = k - 1;
+  for (let j = Math.max(0, k - 15); j < k; j++) if (H[j] >= H[pk]) pk = j;
+  const pauseDays = k - pk - 1;                                   // bars between the high and day k
+  let pbLo = Infinity; for (let j = pk; j < k; j++) pbLo = Math.min(pbLo, L[j]);
+  const pbDepth = (1 - pbLo / H[pk]) * 100;
+  let hi63 = 0, lo63 = Infinity;
+  for (let j = Math.max(0, k - 63); j < k; j++) { hi63 = Math.max(hi63, H[j]); lo63 = Math.min(lo63, L[j]); }
+  const off = (1 - C[k - 1] / hi63) * 100;
+  const mom = (hi63 / lo63 - 1) * 100;
+  const young = k < 55;
+  // uptrend: price above a rising 50 EMA, or still holding near it after a big run (e.g. AEQUS)
+  const trend = young ? C[k - 1] > e21[k - 1] * 0.95 : (C[k - 1] > e50[k - 1] * 0.95 && e50[k - 1] > e50[Math.max(0, k - 21)]);
+  let atE21 = false;
+  for (let j = Math.max(0, k - 3); j <= k; j++) if (L[j] <= e21[j] * 1.02 && C[j] >= e21[j] * 0.98) atE21 = true;
+  let r3 = 0, r20 = 0;
+  for (let j = k - 3; j < k; j++) r3 += H[j] - L[j];
+  for (let j = k - 23; j < k - 3; j++) r20 += H[j] - L[j];
+  const quiet = (r3 / 3) < 0.85 * (r20 / 20);
+  const ok = pauseDays <= 14 && pbDepth <= cfg.pbMax && off <= cfg.near && mom >= cfg.mom && trend;
+  return { ok, pauseDays, pbDepth, off, mom, trend, atE21, quiet, young };
+}
+
+// Is day k a strong-start day? (shape of the candle only)
+function startDay(c, k, cfg, avgVol) {
+  const x = c[k], p = c[k - 1];
+  const gap = (x.open / p.close - 1) * 100;
+  const ol = (x.open - x.low) / x.open * 100;
+  const chg = (x.close / p.close - 1) * 100;
+  const pos = x.high > x.low ? (x.close - x.low) / (x.high - x.low) : 0;
+  const volX = avgVol ? x.volume / avgVol : 1;
+  const brk = x.close > p.high;
+  const ok = gap >= -1.5 && gap <= 3.5 && ol <= cfg.olMax && chg >= cfg.minChg && chg <= 12 && x.close > x.open && pos >= 0.6 && volX >= cfg.vol && (brk || !cfg.needHigh);
+  return { ok, gap, ol, chg, pos, volX, brk };
+}
+
+function analyseStart(c, cfg) {
+  const n = c.length;
+  if (n < 30) return null;
+  const C = c.map(x => x.close), V = c.map(x => x.volume), H = c.map(x => x.high), L = c.map(x => x.low);
+  const k = n - 1, close = C[k];
+  const v20 = smaAt(V, k, 20);
+  const turn = close * v20 / 1e7;
+  if (close < cfg.minPrice || turn < cfg.turn) return null;
+  const e21 = emaSeries(C, 21), e50 = emaSeries(C, 50);
+  const avgV = j => smaAt(V, j - 1, 20);
+  // an entry: a strong-start candle after a pause (the high was 2+ days ago), or a second/third
+  // strong-start day right after one (he adds again: CONFIPET, SKYGOLD, MEESHO)
+  const isEntry = (j, depth = 0) => {
+    const d = startDay(c, j, cfg, avgV(j));
+    if (!d.ok) return null;
+    const cx = startContext(c, j, cfg, e21, e50);
+    if (!cx) return null;
+    const after = depth < 2 && j > 26 && !!isEntry(j - 1, depth + 1);
+    if (!(cx.ok && (cx.pauseDays >= 1 || after))) {
+      if (!(after && cx.off <= cfg.near && cx.trend)) return null;
+    }
+    return { d, cx, add: after };
+  };
+  // earlier strong-start days in the last ~6 months, for the ▲ markers on the chart
+  const history = [];
+  for (let j = Math.max(25, n - 130); j <= k; j++) {
+    if (isEntry(j)) history.push(ymd(c[j].date));
+  }
+  const base = { mode: "start", close, date: ymd(c[k].date), turn: Math.round(turn * 10) / 10, e21: e21[k], history };
+
+  if (cfg.when === "ready") {
+    // A quiet day in a pause near the high: tomorrow's strong open through today's high is the entry
+    const ctxT = (() => {                                           // treat tomorrow as day k+1
+      const cc = c.concat([{ ...c[k] }]);
+      return startContext(cc, k + 1, cfg, e21.concat([e21[k]]), e50.concat([e50[k]]));
+    })();
+    if (!ctxT || !ctxT.ok || ctxT.pauseDays < 1) return null;
+    const avgR = (() => { let s = 0; for (let j = k - 20; j < k; j++) s += H[j] - L[j]; return s / 20; })();
+    const narrow = H[k] - L[k] <= 0.9 * avgR;
+    const inside = H[k] < H[k - 1] && L[k] > L[k - 1];
+    if (!(narrow || inside) || C[k] < e21[k] * 0.98) return null;
+    const trigger = H[k] * 1.001;
+    const slEst = Math.min(L[k], close * 0.98);
+    const risk = (trigger - slEst) / trigger * 100;
+    const tags = ["Ready", ...(inside ? ["Inside day"] : []), ...(ctxT.atE21 ? ["At 21 EMA"] : []), ...(ctxT.quiet ? ["Quiet"] : []),
+      `Pause ${ctxT.pauseDays}d, ${ctxT.pbDepth.toFixed(0)}% deep`, `${ctxT.off.toFixed(0)}% off high`, `Run-up ${ctxT.mom.toFixed(0)}%`];
+    return { ...base, ready: true, days: null, trigger, sl: slEst, risk: Math.round(risk * 10) / 10, entryDate: null,
+      atE21: ctxT.atE21, inside, pauseDays: ctxT.pauseDays, pbDepth: Math.round(ctxT.pbDepth * 10) / 10, off: Math.round(ctxT.off * 10) / 10,
+      mom: Math.round(ctxT.mom), dist: Math.round((trigger - close) / trigger * 1000) / 10, tags };
+  }
+
+  const look = cfg.when === "today" ? 0 : (parseInt(cfg.when) || 1) - 1;
+  for (let j = k; j >= k - look; j--) {
+    const e = isEntry(j);
+    if (!e) continue;
+    const d = e.d, ctx = e.cx;
+    const entry = C[j], sl = L[j];
+    const held = close > sl && Math.min(...L.slice(j + 1, k + 1).concat([Infinity])) > sl;
+    if (!held) return null;                                         // stopped out since
+    const risk = (entry - sl) / entry * 100;
+    const ext = (close / entry - 1) * 100;
+    const tags = [k - j === 0 ? "Entry today" : `Entry ${k - j}d ago`, ...(e.add ? ["Add-on day"] : []), ...(d.ol <= 0.3 ? ["Open = Low"] : []), ...(d.brk ? ["Above prior high"] : []), ...(ctx.atE21 ? ["Off 21 EMA"] : []), ...(ctx.quiet ? ["Quiet pause"] : []),
+      `+${d.chg.toFixed(1)}%`, `Vol ${d.volX.toFixed(1)}×`, `Pause ${ctx.pauseDays}d, ${ctx.pbDepth.toFixed(0)}% deep`, `${ctx.off.toFixed(0)}% off high`];
+    return { ...base, ready: false, days: k - j, entryDate: ymd(c[j].date), trigger: entry, sl, risk: Math.round(risk * 10) / 10,
+      chg: Math.round(d.chg * 10) / 10, ol: Math.round(d.ol * 10) / 10, gap: Math.round(d.gap * 10) / 10, volX: Math.round(d.volX * 10) / 10,
+      openLow: d.ol <= 0.3, brk: d.brk, add: e.add, atE21: ctx.atE21, quiet: ctx.quiet, pauseDays: ctx.pauseDays, pbDepth: Math.round(ctx.pbDepth * 10) / 10,
+      off: Math.round(ctx.off * 10) / 10, mom: Math.round(ctx.mom), ext: Math.round(ext * 10) / 10, dist: Math.round(-ext * 10) / 10, tags };
+  }
+  return null;
+}
+
+// Purple ▲ under a candle (Manas-style entry marker)
+function drawEntryTri(ctx, x, y, size) {
+  ctx.save(); ctx.fillStyle = "rgb(147,51,234)";
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - size, y + size * 1.6); ctx.lineTo(x + size, y + size * 1.6); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
 /* ───────── Learned scan: measure real example trades, then find stocks that look the same ─────────
  * For each example (symbol, entry date, entry price) the app loads the chart and measures the
  * setup on the day BEFORE the entry: run-up, RS vs Nifty, distance from highs and the 21 EMA,
@@ -1233,6 +1373,12 @@ function drawMSChart(canvas, symbol, interval, candles, bars, mark) {
     ctx.moveTo(cx, Y(x.close)); ctx.lineTo(cx + tick, Y(x.close));
     ctx.stroke();
   }
+  if (mark && Array.isArray(mark.triDates) && interval !== "W") {
+    for (const t of mark.triDates) {
+      const di = dc.findIndex(x => ymd(x.date) === t);
+      if (di >= 0) drawEntryTri(ctx, X(di), Math.min(Y(dc[di].low) + 4, PB - 8), t === mark.triMain ? 5 : 3.5);
+    }
+  }
 
   // level lines from scans / watchlists: dashed line across the chart; the value goes on the
   // price axis and the name in the legend row, so nothing is written over the bars
@@ -1470,6 +1616,13 @@ function drawChart(canvas, symbol, interval, candles, bars, mark) {
     if (di >= 0) {
       ctx.fillStyle = "rgb(147,51,234)";
       ctx.beginPath(); ctx.arc(X(di), Math.min(Y(dc[di].low) + 9, topPad + chartH - 4), 4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // Purple ▲ under Manas-style strong-start entry candles
+  if (mark && Array.isArray(mark.triDates) && interval !== "W") {
+    for (const t of mark.triDates) {
+      const di = dc.findIndex(x => ymd(x.date) === t);
+      if (di >= 0) drawEntryTri(ctx, X(di), Math.min(Y(dc[di].low) + 4, topPad + chartH - 10), t === mark.triMain ? 5 : 3.5);
     }
   }
   // Watchlist entry: dashed line at the added price + star on the added candle
@@ -2307,7 +2460,30 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "canslim") {
+  if (r.mode === "start") {
+    if (r.ready) {
+      add("Setup", "Ready \u00B7 quiet day in a pause near the high", "up");
+      add("Buy above", `\u20B9${r.trigger.toFixed(2)} (today\u2019s high)`);
+      add("Stop", `Tomorrow\u2019s low (~\u20B9${r.sl.toFixed(2)})`);
+      add("Risk (est.)", `${r.risk.toFixed(1)}%`);
+    } else {
+      add("Entry day", `${fmtD(r.entryDate)}${r.days ? ` (${r.days}d ago)` : " (today)"}`, "up");
+      add("Entry (close)", `\u20B9${r.trigger.toFixed(2)} \u00B7 +${r.chg}%`);
+      add("Stop (LOD)", `\u20B9${r.sl.toFixed(2)}`);
+      add("Risk", `${r.risk.toFixed(1)}%`, r.risk > 6 ? "down" : "");
+      add("Open \u2192 low", `${r.ol}%${r.openLow ? " (open = low)" : ""}`, r.openLow ? "up" : "");
+      add("Volume", `${r.volX}\u00D7 20-day avg`, r.volX >= 1.5 ? "up" : "");
+      if (r.days) add("Since entry", `${r.ext >= 0 ? "+" : ""}${r.ext}%`, r.ext >= 0 ? "up" : "down");
+    }
+    add("Pause before", `${r.pauseDays} days, ${r.pbDepth}% deep`);
+    add("Off 3-month high", `${r.off}%`);
+    add("3-month range", `${r.mom}%`);
+    add("Turnover 20d", `\u20B9${r.turn} Cr`);
+    $("cwNote").textContent = r.ready
+      ? `Wait for tomorrow: buy only if it opens near today\u2019s close, holds the open and moves through \u20B9${r.trigger.toFixed(2)}; stop at the day\u2019s low. Skip a big gap-up.${r.atE21 ? " Sitting on the 21 EMA." : ""}`
+      : `Strong start out of a ${r.pauseDays}-day pause: opened ${r.gap >= 0 ? "+" : ""}${r.gap}% vs the prior close, barely went below the open, ${r.brk ? "broke the prior day\u2019s high" : "moved up"} and closed strong.${r.add ? " Add-on: the day before was also an entry day." : ""}${r.atE21 ? " Bounced off the 21 EMA." : ""} Purple \u25B2 = entry days (bigger = this one).`;
+    mark = { triDates: r.history, triMain: r.entryDate, lines: [{ price: r.trigger, label: r.ready ? "Buy above" : "Entry", color: "rgb(147,51,234)" }, { price: r.sl, label: r.ready ? "Stop ~" : "Stop LOD", color: "rgb(217,26,26)" }] };
+  } else if (r.mode === "canslim") {
     add("Status", r.status, r.status === "Breakout on volume" || r.status === "In buy zone" ? "up" : r.status === "Extended" ? "down" : "");
     add("Pivot", `\u20B9${r.pivot.toFixed(2)}${r.base ? ` (${r.base})` : " (52-week high)"}`);
     add("Buy zone", `\u20B9${r.pivot.toFixed(2)} \u2013 \u20B9${r.zoneTop.toFixed(2)}`);
@@ -2990,7 +3166,7 @@ async function runVcp() {
   if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
   const mode = $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
-  const cfg = mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -3034,7 +3210,7 @@ async function runVcp() {
       if (!c.length) noData++;
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
-      let r = c.length ? (mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      let r = c.length ? (mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
       if ((mode === "vcp" || mode === "flag") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
@@ -3067,7 +3243,9 @@ async function runVcp() {
   renderVcp();
 }
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
-const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
+const sortVcp = arr => [...arr].sort((a, b) => a.mode === "start"
+  ? ((a.days ?? 0) - (b.days ?? 0)) || ((b.openLow ? 1 : 0) - (a.openLow ? 1 : 0)) || (a.risk - b.risk)
+  : a.mode === "india"
   ? (b.ib - a.ib) || (a.risk - b.risk)
   : a.mode === "rvol" ? (a.days - b.days) || (b.rvol - a.rvol)
   : a.mode === "canslim" ? ((b.rsRank || 0) - (a.rsRank || 0)) || (Math.abs(a.dist) - Math.abs(b.dist))
@@ -3080,7 +3258,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "india"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -3149,6 +3327,23 @@ function renderVcp() {
       row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
       row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
       if (r.day1) row.querySelector(".vdist").classList.add("up");
+      row.onclick = () => openChartWin(r.symbol, vcpSource());
+      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
+      box.appendChild(row);
+      continue;
+    }
+    if (r.mode === "start") {
+      row.classList.add("irow");
+      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+      row.querySelector("b").textContent = r.symbol;
+      const tg = row.querySelector(".itags");
+      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : t === "Open = Low" || t === "Inside day" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
+      row.querySelector(".ilev").textContent = r.ready
+        ? `Buy above \u20B9${r.trigger.toFixed(2)} on a strong open \u00B7 stop = tomorrow\u2019s low (~\u20B9${r.sl.toFixed(2)}) \u00B7 risk ~${r.risk.toFixed(1)}%`
+        : `\u25B2 Entry \u20B9${r.trigger.toFixed(2)} \u00B7 stop LOD \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
+      const dd = row.querySelector(".vdist");
+      dd.textContent = r.ready ? `${r.dist.toFixed(1)}% to trigger` : r.days === 0 ? "Today" : `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% since`;
+      if (!r.ready) dd.classList.add(r.ext >= 0 ? "up" : "down");
       row.onclick = () => openChartWin(r.symbol, vcpSource());
       row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
       box.appendChild(row);
@@ -3250,7 +3445,12 @@ $("vScan").onclick = runVcp;
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start";
+  if (m === "start") {
+    $("vDesc").textContent = "Manas Arora\u2019s entry day, as marked on his charts: after a short quiet pause near the high in an uptrend (often at the 21 EMA), the stock opens near the prior close, barely dips below the open, then climbs and closes near the day\u2019s high, usually through the prior day\u2019s high. Repeated on the next day = add-on. Stop = that day\u2019s low. \u201CReady\u201D lists quiet days that could give this entry tomorrow.";
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    return;
+  }
   if (m === "canslim") {
     $("vDesc").textContent = "Full CAN SLIM: C (quarterly EPS +25%, sales +20%), A (annual EPS growth 25%+/yr, rising each year, ROE 17%+), N (new high or base near pivot), S (accumulation A/B), L (RS Rating 80+), I (institutional holding 5%+) and M (Nifty trend on top). Earnings data updates itself every weekday evening (official NSE results first, Yahoo as backup).";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
@@ -3303,7 +3503,9 @@ $("vPdf").onclick = () => {
   generate(syms);
 };
 function scanItem(r) {
-        const note = r.mode === "canslim"
+        const note = r.mode === "start"
+          ? (r.ready ? `Manas entry ready: buy above \u20B9${r.trigger.toFixed(2)}, stop tomorrow's low` : `Manas entry ${fmtD(r.entryDate)}: \u20B9${r.trigger.toFixed(2)}, stop LOD \u20B9${r.sl.toFixed(2)} (${r.risk}%)`)
+          : r.mode === "canslim"
           ? `CAN SLIM: pivot \u20B9${r.pivot.toFixed(2)}, stop \u20B9${r.stop.toFixed(2)}${r.rsRank !== null ? `, RS ${r.rsRank}` : ""}, A/D ${r.ad}${r.fund && r.fund.q !== null ? `, EPS +${r.fund.q}%` : ""}`
           : r.mode === "base"
           ? `${r.type}: pivot \u20B9${r.pivot.toFixed(2)}, buy zone to \u20B9${r.zoneTop.toFixed(2)}, stop \u20B9${r.stop.toFixed(2)}${r.rsRank !== null ? `, RS ${r.rsRank}` : ""}, A/D ${r.ad}`
@@ -3320,7 +3522,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {
