@@ -363,7 +363,7 @@
         <label><input type="checkbox" id="fNear" checked> Also show near misses (fail 1 rule)</label>
       </div>
       <div class="vgrid" id="setStart" hidden>
-        <label>Show <select id="sWhen"><option value="today">Entries today</option><option value="3" selected>Entries in the last 3 days</option><option value="5">Entries in the last 5 days</option><option value="ready">Ready for tomorrow</option></select></label>
+        <label>Show <select id="sWhen"><option value="ready" selected>Tomorrow’s watchlist (before the ▲) — run after 3:30 pm</option><option value="live">Live: forming now — run 9:30–10:30 am</option><option value="today">Entries today (after close)</option><option value="3">Entries in the last 3 days</option><option value="5">Entries in the last 5 days</option></select></label>
         <label>Day's gain ≥ <input type="number" id="sChg" value="0.5" min="0" step="0.5"> %</label>
         <label>Low within <input type="number" id="sOL" value="2.5" min="0.1" step="0.5"> % of the open</label>
         <label>Within <input type="number" id="sNear" value="20" min="1" max="60"> % of the 3-month high</label>
@@ -528,7 +528,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 41 · Manas entry tuned on 33 examples</p>
+  <p class="small" style="text-align:center">Version 42 · Manas watchlist before the entry + live mode</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -583,8 +583,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=41"></script>
-<script src="app.js?v=41"></script>
+<script src="symbols.js?v=42"></script>
+<script src="app.js?v=42"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

@@ -728,7 +728,15 @@ function analyseStart(c, cfg) {
   const turn = close * v20 / 1e7;
   if (close < cfg.minPrice || turn < cfg.turn) return null;
   const e21 = emaSeries(C, 21), e50 = emaSeries(C, 50);
-  const avgV = j => smaAt(V, j - 1, 20);
+  // During market hours the last bar is today's live candle: compare its volume with the share of a
+  // normal day that has traded so far (session 9:15–15:30 IST = 375 minutes)
+  const live = (() => {
+    const ist = new Date(Date.now() + 19800000);
+    const today = `${ist.getUTCFullYear()}-${String(ist.getUTCMonth() + 1).padStart(2, "0")}-${String(ist.getUTCDate()).padStart(2, "0")}`;
+    const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes() - 555;
+    return ymd(c[k].date) === today && mins > 0 && mins < 375 ? Math.max(0.08, mins / 375) : 0;
+  })();
+  const avgV = j => smaAt(V, j - 1, 20) * (j === k && live ? live : 1);
   // an entry: a strong-start candle after a pause (the high was 2+ days ago), or a second/third
   // strong-start day right after one (he adds again: CONFIPET, SKYGOLD, MEESHO)
   const isEntry = (j, depth = 0) => {
@@ -747,30 +755,51 @@ function analyseStart(c, cfg) {
   for (let j = Math.max(25, n - 130); j <= k; j++) {
     if (isEntry(j)) history.push(ymd(c[j].date));
   }
-  const base = { mode: "start", close, date: ymd(c[k].date), turn: Math.round(turn * 10) / 10, e21: e21[k], history };
+  const base = { mode: "start", close, date: ymd(c[k].date), turn: Math.round(turn * 10) / 10, e21: e21[k], history, live: !!live };
 
   if (cfg.when === "ready") {
-    // A quiet day in a pause near the high: tomorrow's strong open through today's high is the entry
-    const ctxT = (() => {                                           // treat tomorrow as day k+1
-      const cc = c.concat([{ ...c[k] }]);
-      return startContext(cc, k + 1, cfg, e21.concat([e21[k]]), e50.concat([e50[k]]));
-    })();
+    // The day BEFORE his ▲: a small, quiet candle inside a pause near the high. In his charts the
+    // day before the entry is a doji / small red / inside day (DIAMONDPOW, ATHERENERG, GENUSPOWER,
+    // SKIPPER, TATATECH, FCL, SUVEN), often sitting on the 21 EMA (DATAPATTNS, MIDHANI).
+    const cc = c.concat([{ ...c[k] }]);
+    const ctxT = startContext(cc, k + 1, cfg, e21.concat([e21[k]]), e50.concat([e50[k]]));
     if (!ctxT || !ctxT.ok || ctxT.pauseDays < 1) return null;
-    const avgR = (() => { let s = 0; for (let j = k - 20; j < k; j++) s += H[j] - L[j]; return s / 20; })();
-    const narrow = H[k] - L[k] <= 0.9 * avgR;
+    let sr = 0; for (let j = k - 20; j < k; j++) sr += H[j] - L[j];
+    const avgR = sr / 20, rng = H[k] - L[k];
+    const chgT = (C[k] / C[k - 1] - 1) * 100;
+    const body = Math.abs(C[k] - c[k].open);
     const inside = H[k] < H[k - 1] && L[k] > L[k - 1];
-    if (!(narrow || inside) || C[k] < e21[k] * 0.98) return null;
+    const small = rng <= 1.1 * avgR || inside || body <= 0.5 * rng;
+    if (!small || chgT < -3.5 || chgT > 3) return null;           // a big move today isn't a "quiet" day
+    let h3 = -Infinity, l3 = Infinity;
+    for (let j = k - 2; j <= k; j++) { h3 = Math.max(h3, H[j]); l3 = Math.min(l3, L[j]); }
+    const tight3 = (h3 - l3) / C[k] * 100, adr = avgR / C[k] * 100;
+    const volDry = V[k] / (smaAt(V, k - 1, 20) || 1);
+    const e21d = (C[k] / e21[k] - 1) * 100;
+    const recent = history.filter(t => t >= ymd(c[Math.max(0, k - 10)].date)).length;   // strong start in the last 2 weeks
+    // score 0-100: tighter, quieter, closer to the 21 EMA and to the high, a leader that has done it before
+    let score = 0;
+    score += Math.max(0, 25 - 25 * Math.max(0, tight3 / Math.max(adr, 0.5) - 1) / 2);   // 3-day range vs ADR
+    score += volDry <= 0.7 ? 15 : volDry <= 1 ? 9 : 0;
+    score += Math.abs(e21d) <= 3 ? 15 : e21d > 3 && e21d <= 8 ? 8 : 0;
+    score += inside ? 10 : body <= 0.35 * rng ? 7 : 3;
+    score += Math.max(0, 15 - ctxT.off);
+    score += Math.min(10, history.length * 3) + (recent ? 10 : 0);
+    score = Math.round(Math.min(100, score));
     const trigger = H[k] * 1.001;
-    const slEst = Math.min(L[k], close * 0.98);
+    const openLo = C[k] * 0.99, openHi = C[k] * 1.03;
+    const slEst = C[k] * 0.98;                                      // a strong start rarely goes >2% under its open
     const risk = (trigger - slEst) / trigger * 100;
-    const tags = ["Ready", ...(inside ? ["Inside day"] : []), ...(ctxT.atE21 ? ["At 21 EMA"] : []), ...(ctxT.quiet ? ["Quiet"] : []),
-      `Pause ${ctxT.pauseDays}d, ${ctxT.pbDepth.toFixed(0)}% deep`, `${ctxT.off.toFixed(0)}% off high`, `Run-up ${ctxT.mom.toFixed(0)}%`];
-    return { ...base, ready: true, days: null, trigger, sl: slEst, risk: Math.round(risk * 10) / 10, entryDate: null,
-      atE21: ctxT.atE21, inside, pauseDays: ctxT.pauseDays, pbDepth: Math.round(ctxT.pbDepth * 10) / 10, off: Math.round(ctxT.off * 10) / 10,
-      mom: Math.round(ctxT.mom), dist: Math.round((trigger - close) / trigger * 1000) / 10, tags };
+    const tags = [`Watch · ${score}`, ...(inside ? ["Inside day"] : body <= 0.35 * rng ? ["Doji / small"] : []), ...(Math.abs(e21d) <= 3 ? ["At 21 EMA"] : []),
+      ...(volDry <= 0.7 ? ["Volume dry"] : []), ...(recent ? ["Strong start <2 wks ago"] : history.length ? [`${history.length} past ▲`] : []),
+      `3-day range ${tight3.toFixed(1)}%`, `Pause ${ctxT.pauseDays}d, ${ctxT.pbDepth.toFixed(0)}% deep`, `${ctxT.off.toFixed(0)}% off high`];
+    return { ...base, ready: true, days: null, score, trigger, sl: slEst, risk: Math.round(risk * 10) / 10, entryDate: null,
+      openLo, openHi, todayLow: L[k], atE21: Math.abs(e21d) <= 3, inside, tight3: Math.round(tight3 * 10) / 10, volDry: Math.round(volDry * 100) / 100,
+      pauseDays: ctxT.pauseDays, pbDepth: Math.round(ctxT.pbDepth * 10) / 10, off: Math.round(ctxT.off * 10) / 10,
+      mom: Math.round(ctxT.mom), dist: Math.round((trigger - C[k]) / trigger * 1000) / 10, tags };
   }
 
-  const look = cfg.when === "today" ? 0 : (parseInt(cfg.when) || 1) - 1;
+  const look = cfg.when === "today" || cfg.when === "live" ? 0 : (parseInt(cfg.when) || 1) - 1;
   for (let j = k; j >= k - look; j--) {
     const e = isEntry(j);
     if (!e) continue;
@@ -780,7 +809,7 @@ function analyseStart(c, cfg) {
     if (!held) return null;                                         // stopped out since
     const risk = (entry - sl) / entry * 100;
     const ext = (close / entry - 1) * 100;
-    const tags = [k - j === 0 ? "Entry today" : `Entry ${k - j}d ago`, ...(e.add ? ["Add-on day"] : []), ...(d.ol <= 0.3 ? ["Open = Low"] : []), ...(d.brk ? ["Above prior high"] : []), ...(ctx.atE21 ? ["Off 21 EMA"] : []), ...(ctx.quiet ? ["Quiet pause"] : []),
+    const tags = [k - j === 0 ? (live ? "\u25CF Live now" : "Entry today") : `Entry ${k - j}d ago`, ...(e.add ? ["Add-on day"] : []), ...(d.ol <= 0.3 ? ["Open = Low"] : []), ...(d.brk ? ["Above prior high"] : []), ...(ctx.atE21 ? ["Off 21 EMA"] : []), ...(ctx.quiet ? ["Quiet pause"] : []),
       `+${d.chg.toFixed(1)}%`, `Vol ${d.volX.toFixed(1)}×`, `Pause ${ctx.pauseDays}d, ${ctx.pbDepth.toFixed(0)}% deep`, `${ctx.off.toFixed(0)}% off high`];
     return { ...base, ready: false, days: k - j, entryDate: ymd(c[j].date), trigger: entry, sl, risk: Math.round(risk * 10) / 10,
       chg: Math.round(d.chg * 10) / 10, ol: Math.round(d.ol * 10) / 10, gap: Math.round(d.gap * 10) / 10, volX: Math.round(d.volX * 10) / 10,
@@ -2462,10 +2491,13 @@ async function showVcpAt(sym, n, force) {
   let mark;
   if (r.mode === "start") {
     if (r.ready) {
-      add("Setup", "Ready \u00B7 quiet day in a pause near the high", "up");
-      add("Buy above", `\u20B9${r.trigger.toFixed(2)} (today\u2019s high)`);
-      add("Stop", `Tomorrow\u2019s low (~\u20B9${r.sl.toFixed(2)})`);
-      add("Risk (est.)", `${r.risk.toFixed(1)}%`);
+      add("Watch score", `${r.score} / 100`, r.score >= 60 ? "up" : "");
+      add("1. Open between", `\u20B9${r.openLo.toFixed(2)} \u2013 \u20B9${r.openHi.toFixed(2)}`);
+      add("2. Holds the open", "falls no more than ~2% below it");
+      add("3. Buy above", `\u20B9${r.trigger.toFixed(2)} (today\u2019s high)`, "up");
+      add("Stop", `Tomorrow\u2019s low (~\u20B9${r.sl.toFixed(2)}, risk ~${r.risk.toFixed(1)}%)`);
+      add("3-day range", `${r.tight3}%`);
+      add("Volume today", `${r.volDry}\u00D7 20-day avg`, r.volDry <= 0.7 ? "up" : "");
     } else {
       add("Entry day", `${fmtD(r.entryDate)}${r.days ? ` (${r.days}d ago)` : " (today)"}`, "up");
       add("Entry (close)", `\u20B9${r.trigger.toFixed(2)} \u00B7 +${r.chg}%`);
@@ -2480,9 +2512,11 @@ async function showVcpAt(sym, n, force) {
     add("3-month range", `${r.mom}%`);
     add("Turnover 20d", `\u20B9${r.turn} Cr`);
     $("cwNote").textContent = r.ready
-      ? `Wait for tomorrow: buy only if it opens near today\u2019s close, holds the open and moves through \u20B9${r.trigger.toFixed(2)}; stop at the day\u2019s low. Skip a big gap-up.${r.atE21 ? " Sitting on the 21 EMA." : ""}`
+      ? `Quiet day in a ${r.pauseDays}-day pause near the high${r.atE21 ? ", sitting on the 21 EMA" : ""}. This is the kind of day before his \u25B2 entries. Tomorrow it is an entry only if all 3 steps happen; if it gaps above \u20B9${r.openHi.toFixed(2)} or breaks the open, skip. Run \u201CLive: forming now\u201D at 9:30\u201310:30 IST to see which ones are triggering.`
       : `Strong start out of a ${r.pauseDays}-day pause: opened ${r.gap >= 0 ? "+" : ""}${r.gap}% vs the prior close, barely went below the open, ${r.brk ? "broke the prior day\u2019s high" : "moved up"} and closed strong.${r.add ? " Add-on: the day before was also an entry day." : ""}${r.atE21 ? " Bounced off the 21 EMA." : ""} Purple \u25B2 = entry days (bigger = this one).`;
-    mark = { triDates: r.history, triMain: r.entryDate, lines: [{ price: r.trigger, label: r.ready ? "Buy above" : "Entry", color: "rgb(147,51,234)" }, { price: r.sl, label: r.ready ? "Stop ~" : "Stop LOD", color: "rgb(217,26,26)" }] };
+    mark = { triDates: r.history, triMain: r.entryDate, lines: r.ready
+      ? [{ price: r.trigger, label: "Buy above", color: "rgb(147,51,234)" }, { price: r.openHi, label: "Max open", color: "rgb(234,88,12)" }, { price: r.openLo, label: "Min open", color: "rgb(120,123,134)" }]
+      : [{ price: r.trigger, label: r.live ? "Now" : "Entry", color: "rgb(147,51,234)" }, { price: r.sl, label: "Stop LOD", color: "rgb(217,26,26)" }] };
   } else if (r.mode === "canslim") {
     add("Status", r.status, r.status === "Breakout on volume" || r.status === "In buy zone" ? "up" : r.status === "Extended" ? "down" : "");
     add("Pivot", `\u20B9${r.pivot.toFixed(2)}${r.base ? ` (${r.base})` : " (52-week high)"}`);
@@ -3244,7 +3278,7 @@ async function runVcp() {
 }
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
 const sortVcp = arr => [...arr].sort((a, b) => a.mode === "start"
-  ? ((a.days ?? 0) - (b.days ?? 0)) || ((b.openLow ? 1 : 0) - (a.openLow ? 1 : 0)) || (a.risk - b.risk)
+  ? ((b.score || 0) - (a.score || 0)) || ((a.days ?? 0) - (b.days ?? 0)) || ((b.openLow ? 1 : 0) - (a.openLow ? 1 : 0)) || (a.risk - b.risk)
   : a.mode === "india"
   ? (b.ib - a.ib) || (a.risk - b.risk)
   : a.mode === "rvol" ? (a.days - b.days) || (b.rvol - a.rvol)
@@ -3339,7 +3373,7 @@ function renderVcp() {
       const tg = row.querySelector(".itags");
       r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : t === "Open = Low" || t === "Inside day" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
       row.querySelector(".ilev").textContent = r.ready
-        ? `Buy above \u20B9${r.trigger.toFixed(2)} on a strong open \u00B7 stop = tomorrow\u2019s low (~\u20B9${r.sl.toFixed(2)}) \u00B7 risk ~${r.risk.toFixed(1)}%`
+        ? `Tomorrow: opens \u20B9${r.openLo.toFixed(1)}\u2013${r.openHi.toFixed(1)}, holds the open, buy above \u20B9${r.trigger.toFixed(2)} \u00B7 stop = day\u2019s low`
         : `\u25B2 Entry \u20B9${r.trigger.toFixed(2)} \u00B7 stop LOD \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
       const dd = row.querySelector(".vdist");
       dd.textContent = r.ready ? `${r.dist.toFixed(1)}% to trigger` : r.days === 0 ? "Today" : `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% since`;
@@ -3447,7 +3481,7 @@ function vcpModeUI() {
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
   $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start";
   if (m === "start") {
-    $("vDesc").textContent = "Manas Arora\u2019s entry day, as marked on his charts: after a short quiet pause near the high in an uptrend (often at the 21 EMA), the stock opens near the prior close, barely dips below the open, then climbs and closes near the day\u2019s high, usually through the prior day\u2019s high. Repeated on the next day = add-on. Stop = that day\u2019s low. \u201CReady\u201D lists quiet days that could give this entry tomorrow.";
+    $("vDesc").textContent = "Manas Arora\u2019s entry day, as marked on his charts: after a short quiet pause near the high in an uptrend (often at the 21 EMA), the stock opens near the prior close, barely dips below the open, then climbs and closes near the day\u2019s high, usually through the prior day\u2019s high. Repeated on the next day = add-on. Stop = that day\u2019s low. \u201CTomorrow\u2019s watchlist\u201D finds the quiet day BEFORE the \u25B2 (run after 3:30 pm IST); \u201CLive: forming now\u201D catches it during the session (run 9:30\u201310:30 am IST).";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
     return;
   }
@@ -3504,7 +3538,7 @@ $("vPdf").onclick = () => {
 };
 function scanItem(r) {
         const note = r.mode === "start"
-          ? (r.ready ? `Manas entry ready: buy above \u20B9${r.trigger.toFixed(2)}, stop tomorrow's low` : `Manas entry ${fmtD(r.entryDate)}: \u20B9${r.trigger.toFixed(2)}, stop LOD \u20B9${r.sl.toFixed(2)} (${r.risk}%)`)
+          ? (r.ready ? `Manas watch ${r.score}: tomorrow open \u20B9${r.openLo.toFixed(1)}-${r.openHi.toFixed(1)}, buy above \u20B9${r.trigger.toFixed(2)}, stop day's low` : `Manas entry ${fmtD(r.entryDate)}: \u20B9${r.trigger.toFixed(2)}, stop LOD \u20B9${r.sl.toFixed(2)} (${r.risk}%)`)
           : r.mode === "canslim"
           ? `CAN SLIM: pivot \u20B9${r.pivot.toFixed(2)}, stop \u20B9${r.stop.toFixed(2)}${r.rsRank !== null ? `, RS ${r.rsRank}` : ""}, A/D ${r.ad}${r.fund && r.fund.q !== null ? `, EPS +${r.fund.q}%` : ""}`
           : r.mode === "base"
