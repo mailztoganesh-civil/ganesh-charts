@@ -2058,6 +2058,65 @@ function renderWatch() {
 }
 
 $("wSelect").onclick = () => { selectMode = !selectMode; selected.clear(); renderWatch(); };
+
+/* ── PDF of watchlists: tick one or more lists -> one PDF per list, or one combined PDF ── */
+const wlPdfPick = new Set();
+function renderWlPdf() {
+  const box = $("wpList");
+  box.innerHTML = "";
+  for (const l of WL.lists) {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "pickrow";
+    const on = wlPdfPick.has(l.id);
+    b.setAttribute("aria-pressed", String(on));
+    b.innerHTML = `<span class="tick"></span><span class="pname"></span><span class="pcount"></span>`;
+    b.querySelector(".tick").textContent = on ? "\u2611" : "\u2610";
+    b.querySelector(".pname").textContent = l.name;
+    b.querySelector(".pcount").textContent = `${l.items.length} stock${l.items.length === 1 ? "" : "s"}`;
+    b.disabled = !l.items.length;
+    b.onclick = () => { on ? wlPdfPick.delete(l.id) : wlPdfPick.add(l.id); renderWlPdf(); };
+    box.appendChild(b);
+  }
+  const chosen = WL.lists.filter(l => wlPdfPick.has(l.id));
+  const uniq = new Set(chosen.flatMap(l => l.items.map(i => i.symbol)));
+  const per = $("wpPer").checked;
+  $("wpGo").disabled = !chosen.length || state.busy;
+  $("wpGo").textContent = !chosen.length ? "Tick lists above" : per
+    ? `Make ${chosen.length} PDF${chosen.length > 1 ? "s" : ""} (${chosen.reduce((a, l) => a + l.items.length, 0)} stocks)`
+    : `Make 1 PDF (${uniq.size} stocks)`;
+}
+$("wPdf").onclick = () => {
+  if (selectMode && selected.size) {                     // stocks picked with Select -> PDF of just those
+    const L = activeList();
+    makeWlPdf([{ name: `${L.name} (selected)`, symbols: L.items.map(i => i.symbol).filter(x => selected.has(x)) }]);
+    return;
+  }
+  wlPdfPick.clear(); wlPdfPick.add(activeList().id);
+  renderWlPdf(); $("wpSheet").hidden = false;
+};
+$("wpPer").onchange = $("wpOne").onchange = renderWlPdf;
+$("wpClose").onclick = () => { $("wpSheet").hidden = true; };
+$("wpSheet").onclick = e => { if (e.target === $("wpSheet")) $("wpSheet").hidden = true; };
+$("wpGo").onclick = () => {
+  const chosen = WL.lists.filter(l => wlPdfPick.has(l.id) && l.items.length);
+  if (!chosen.length) return;
+  const order = l => l.items.map(i => i.symbol);
+  let groups;
+  if ($("wpPer").checked) groups = chosen.map(l => ({ name: l.name, symbols: order(l) }));
+  else {
+    const seen = new Set(), syms = [];
+    for (const l of chosen) for (const x of order(l)) if (!seen.has(x)) { seen.add(x); syms.push(x); }
+    groups = [{ name: chosen.length === 1 ? chosen[0].name : chosen.map(l => l.name).join(" + "), symbols: syms }];
+  }
+  $("wpSheet").hidden = true;
+  makeWlPdf(groups);
+};
+function makeWlPdf(groups) {
+  if (state.busy) { toast("A PDF is already being made"); return; }
+  $("step3").hidden = false;
+  $("step3").scrollIntoView({ behavior: "smooth", block: "start" });
+  generate(null, { groups });
+}
 $("wSelAll").onclick = () => {
   const L = activeList();
   if (selected.size === L.items.length) selected.clear(); else L.items.forEach(i => selected.add(i.symbol));
@@ -2682,9 +2741,10 @@ $("clearSaved").onclick = async () => {
  * Works part by part: fetch → draw → build that PDF → save it → free memory → next part.
  */
 $("go").onclick = () => generate();
-async function generate(override) {
+async function generate(override, opts = {}) {
   if (chartStyle() === "ms") await loadFundamentals();
-  const stocks = override || filteredStocks();
+  const groups = opts.groups && opts.groups.length ? opts.groups : null;     // [{ name, symbols }] -> one PDF each
+  const stocks = groups ? groups.flatMap(g => g.symbols) : (override || filteredStocks());
   if (!stocks.length || state.busy) return;
   state.busy = true; refresh();
   $("errors").hidden = true;
@@ -2699,7 +2759,8 @@ async function generate(override) {
   $("dBars").value = dBarsN; $("wBars").value = wBarsN;
   const splitOn = document.querySelector('input[name="split"]:checked').value === "split";
   const PART_SIZE = splitOn ? Math.max(1, parseInt($("splitN").value, 10) || 150) : stocks.length;
-  const parts = Math.ceil(stocks.length / PART_SIZE);
+  const parts = groups ? groups.length : Math.ceil(stocks.length / PART_SIZE);
+  const fileSafe = t => String(t).replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "_").slice(0, 40) || "Watchlist";
   const canvas = document.createElement("canvas");
   canvas.width = CW * SCALE; canvas.height = CH * SCALE;
   const noData = [];
@@ -2708,7 +2769,7 @@ async function generate(override) {
   setP("Fetching data...");
 
   for (let p = 0; p < parts; p++) {
-    const chunk = stocks.slice(p * PART_SIZE, (p + 1) * PART_SIZE);
+    const chunk = groups ? groups[p].symbols : stocks.slice(p * PART_SIZE, (p + 1) * PART_SIZE);
     const doc = new jspdf.jsPDF({ unit: "pt", format: [PW, PH], orientation: "portrait", compress: true });
     let first = true;
     const pageStocks = [], pageCloses = [];
@@ -2733,11 +2794,11 @@ async function generate(override) {
     }
     setP(`Saving PDF${parts > 1 ? ` ${p + 1} of ${parts}` : ""}...`);
     await new Promise(r => setTimeout(r, 30));
-    const name = parts > 1 ? `GaneshCharts_part${p + 1}_of_${parts}.pdf` : "GaneshCharts.pdf";
+    const name = groups ? `${fileSafe(groups[p].name)}_${ymd(new Date())}.pdf` : parts > 1 ? `GaneshCharts_part${p + 1}_of_${parts}.pdf` : "GaneshCharts.pdf";
     const from = p * PART_SIZE + 1, to = p * PART_SIZE + chunk.length;
     const blob = doc.output("blob");
     try {
-      await DB.put({ name, order: p, stocks: pageStocks, closes: pageCloses, label: parts > 1 ? (from === to ? `Stock ${from}` : `Stocks ${from}\u2013${to}`) : `${chunk.length} stocks`, blob });
+      await DB.put({ name, order: p, stocks: pageStocks, closes: pageCloses, label: groups ? `${groups[p].name} \u00B7 ${chunk.length} stocks` : parts > 1 ? (from === to ? `Stock ${from}` : `Stocks ${from}\u2013${to}`) : `${chunk.length} stocks`, blob });
     } catch {
       // Storage full/blocked: keep it in this page only
       state.memOnly = (state.memOnly || []).concat({ name, blob });

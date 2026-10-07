@@ -496,6 +496,7 @@
     <div class="wtools">
       <span><button type="button" class="link2" id="wRename">Rename</button> · <button type="button" class="link2 red" id="wDelList">Delete list</button></span>
       <span class="wright"><select id="wMgmt" aria-label="Exit rules"><option value="manas">Exit rules: Manas Arora</option><option value="vcps">Exit rules: VCPSwing</option></select>
+      <button type="button" class="wbtn" id="wPdf">PDF</button>
       <button type="button" class="wbtn" id="wSelect">Select</button></span>
     </div>
     <div class="wselbar" id="wSelBar" hidden>
@@ -528,7 +529,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 42 · Manas watchlist before the entry + live mode</p>
+  <p class="small" style="text-align:center">Version 43 · PDF of watchlists</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -558,6 +559,19 @@
     <div class="pnew"><input type="text" id="pickNew" placeholder="New list name" aria-label="New list name"><button type="button" class="wbtn" id="pickCreate">+ Create</button></div>
   </div>
 </div>
+<div id="wpSheet" class="sheetwrap" hidden role="dialog" aria-modal="true" aria-labelledby="wpTitle">
+  <div class="sheet">
+    <div class="shead"><b id="wpTitle">PDF of watchlists</b><button type="button" class="wbtn" id="wpClose">Close</button></div>
+    <p class="small">Tick the lists to include. Charts use the history and chart style set in Step 3.</p>
+    <div id="wpList"></div>
+    <div class="split" role="group" aria-label="PDF output" style="margin-top:12px">
+      <label><input type="radio" name="wpMode" id="wpPer" checked> One PDF per list</label>
+      <label><input type="radio" name="wpMode" id="wpOne"> One combined PDF (duplicates removed)</label>
+    </div>
+    <button type="button" class="wbtn primary" id="wpGo" style="width:100%;padding:13px;margin-top:6px">Make PDF</button>
+    <p class="small">Tip: tap Select, pick some stocks, then PDF to make a PDF of just those.</p>
+  </div>
+</div>
 <div id="syncSheet" class="sheetwrap" hidden role="dialog" aria-modal="true" aria-labelledby="syncTitle">
   <div class="sheet">
     <div class="shead"><b id="syncTitle">Auto-sync watchlists</b><button type="button" class="wbtn" id="syncClose">Close</button></div>
@@ -583,8 +597,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=42"></script>
-<script src="app.js?v=42"></script>
+<script src="symbols.js?v=43"></script>
+<script src="app.js?v=43"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
