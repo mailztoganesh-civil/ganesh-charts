@@ -402,7 +402,7 @@
         <label><input type="checkbox" id="fNear" checked> Also show near misses (fail 1 rule)</label>
       </div>
       <div class="vgrid" id="setUc" hidden>
-        <label>Show <select id="uShow"><option value="all">All stages</option><option value="watch">Watch: undercut now (before entry)</option><option value="reclaim">Reclaimed the range low</option><option value="breakout">Broke out above the range</option></select></label>
+        <label>Show <select id="uShow"><option value="all">All stages (incl. bases at the top)</option><option value="watch">Before the entry: base at top + undercut now</option><option value="reclaim">Reclaimed the range low</option><option value="breakout">Broke out above the range</option></select></label>
         <label>Range length <input type="number" id="uMinW" value="3" min="2" max="20"> to <input type="number" id="uMaxW" value="12" min="3" max="40"> weeks</label>
         <label>Range no deeper than <input type="number" id="uDepth" value="15" min="4" max="40"> %</label>
         <label>Undercut at least <input type="number" id="uUcMin" value="1.5" min="0.3" step="0.5"> % and up to <input type="number" id="uUc" value="8" min="0.5" step="0.5"> % below the range low</label>
@@ -579,7 +579,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 48 · undercut & rally: base at the top</p>
+  <p class="small" style="text-align:center">Version 49 · undercut: why-filtered + bases at top</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -647,8 +647,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=48"></script>
-<script src="app.js?v=48"></script>
+<script src="symbols.js?v=49"></script>
+<script src="app.js?v=49"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

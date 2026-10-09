@@ -679,101 +679,118 @@ function ucSettings() {
   };
 }
 
+const UC_RULES = {
+  data: "Not enough history", liq: "Price / liquidity too low", trend: "Not in an uptrend (50-day not rising / below 200-day)",
+  norange: "No flat base (range too deep, too short, or low tested < 2 times)", falling: "Range drifting down, not flat",
+  nottop: "Base not at the top (range high below the 52-week high)", runup: "No advance into the base",
+  noundercut: "No undercut of the base low yet", deep: "Undercut too deep (a breakdown)", slow: "Too long under the range (no quick snap-back)",
+  broken: "Undercut low broken again", weak: "Reclaim day weak (red / doji / closed low)", below50: "Too far under the 50-day",
+  fellback: "Fell back under the range", notup: "Still under the range, not turning up yet",
+};
+
 function analyseUndercut(c, cfg) {
+  const fail = f => ({ fails: [f] });
   const n = c.length;
-  if (n < 80) return null;
+  if (n < 80) return fail("data");
   const H = c.map(x => x.high), L = c.map(x => x.low), C = c.map(x => x.close), V = c.map(x => x.volume);
   const k = n - 1, close = C[k];
   const v20 = smaAt(V, k - 1, 20) || 1;
   const turn = close * smaAt(V, k, 20) / 1e7;
-  if (close < cfg.minPrice || turn < cfg.turn) return null;
-  // undercut bar = lowest low of the last `look` bars
+  if (close < cfg.minPrice || turn < cfg.turn) return fail("liq");
+  const s50 = smaAt(C, k, 50), s50p = smaAt(C, k - 20, 50), s200 = smaAt(C, k, 200);
+  if (!(s50 > s50p) || (!isNaN(s200) && !(s50 > s200))) return fail("trend");
+
+  // separate tests of a level (touches at least 5 bars apart)
+  const countTests = (a, b, lv) => { let t = 0, last = -99; for (let j = a; j <= b; j++) if (L[j] <= lv * 1.025 && j - last >= 5) { t++; last = j; } return t; };
+  const avgC = (a, b) => { let x = 0; for (let j = a; j <= b; j++) x += C[j]; return x / (b - a + 1); };
+  // longest flat window ending at `end`: within the depth limit, low tested twice, low not at the very start
+  const findBase = end => {
+    let best = null, hi = -Infinity, lo = Infinity, loAt = -1;
+    for (let R = 1; R <= cfg.maxR && end - R + 1 > 0; R++) {
+      const j = end - R + 1;
+      hi = Math.max(hi, H[j]);
+      if (L[j] < lo) { lo = L[j]; loAt = j; }
+      if ((hi / lo - 1) * 100 > cfg.depth) break;
+      if (R < cfg.minR || loAt < j + Math.ceil(R * 0.2)) continue;
+      const t = countTests(j, end, lo);
+      if (t >= 2) best = { R, top: hi, sup: lo, start: j, end, tests: t };
+    }
+    return best;
+  };
+  // the base must be AT THE TOP, flat, and come right after an advance
+  let hi52 = 0, hiAt = -1; for (let j = Math.max(0, k - 251); j <= k; j++) if (H[j] >= hi52) { hi52 = H[j]; hiAt = j; }
+  const checkBase = b => {
+    const third = Math.max(3, Math.floor(b.R / 3));
+    if ((avgC(b.end - third + 1, b.end) / avgC(b.start, b.start + third - 1) - 1) * 100 < -cfg.depth * 0.25) return "falling";
+    if (b.top < hi52 * (1 - cfg.nearHi / 100) || hiAt < b.start - 10) return "nottop";
+    let pre = Infinity; for (let j = Math.max(0, b.start - 60); j < b.start; j++) pre = Math.min(pre, L[j]);
+    b.runUp = (b.top / pre - 1) * 100;
+    if (b.runUp < cfg.mom || C[Math.max(0, b.start - 20)] > b.sup * 1.02) return "runup";
+    return null;
+  };
+
+  // A) an undercut in the last `look` bars: base = the bars before the drop into it
   let u = k;
   for (let j = k - cfg.look + 1; j <= k; j++) if (L[j] < L[u]) u = j;
-  // range = the bars before the drop into the undercut (the last 3 bars before it can be the drop)
-  const end = u - 3;
-  if (end - cfg.minR < 60) return null;
-  // pick the longest window that is a real sideways range: within the depth limit, its low tested
-  // at least twice, and the low not at the very start (that would be the advance INTO the range)
-  // separate tests of the range low (touches at least 5 bars apart)
-  const countTests = (a, b, sup) => { let t = 0, last = -99; for (let j = a; j <= b; j++) if (L[j] <= sup * 1.025 && j - last >= 5) { t++; last = j; } return t; };
-  let best = null, hi = -Infinity, lo = Infinity, loAt = -1;
-  for (let R = 1; R <= cfg.maxR && end - R + 1 > 0; R++) {
-    const j = end - R + 1;
-    hi = Math.max(hi, H[j]);
-    if (L[j] < lo) { lo = L[j]; loAt = j; }
-    if ((hi / lo - 1) * 100 > cfg.depth) break;
-    if (R < cfg.minR || loAt < j + Math.ceil(R * 0.2)) continue;
-    const t = countTests(j, end, lo);
-    if (t >= 2) best = { R, hi, lo, start: j, tests: t };
+  let base = u - 3 - cfg.minR >= 60 ? findBase(u - 3) : null;
+  let why = null;
+  if (base) why = checkBase(base);
+  const ucPct = base ? (1 - L[u] / base.sup) * 100 : 0;
+  let isUndercut = !!base && !why && ucPct >= cfg.ucMin;
+  if (isUndercut && ucPct > cfg.uc) return fail("deep");
+  if (isUndercut) {
+    let inRangeBefore = false;
+    for (let j = u - 3; j < u; j++) { if (C[j] < base.sup * (1 - cfg.uc / 100)) return fail("deep"); if (C[j] >= base.sup) inRangeBefore = true; }
+    if (!inRangeBefore) isUndercut = false;
   }
-  if (!best) return null;
-  const { R, hi: top, lo: sup, start, tests } = best;
-  // a sideways range, not a falling channel: the first and last thirds sit at about the same level
-  const third = Math.max(3, Math.floor(R / 3));
-  const avgC = (a, b) => { let x = 0; for (let j = a; j <= b; j++) x += C[j]; return x / (b - a + 1); };
-  const drift = (avgC(end - third + 1, end) / avgC(start, start + third - 1) - 1) * 100;
-  if (drift < -cfg.depth * 0.25) return null;
-  // uptrend (stage 2): the 50-day rising and above the 200-day; range top near the 52-week high
-  const s50a = smaAt(C, end, 50), s50b = smaAt(C, end - 20, 50), s200 = smaAt(C, end, 200);
-  if (!(s50a > s50b)) return null;
-  if (!isNaN(s200) && !(s50a > s200)) return null;
-  if (avgC(end - 4, end) < s50a * 0.95) return null;                       // range sitting on / above the 50-day
-  // the undercut: below the range low, but a shakeout rather than a breakdown
-  const ucPct = (1 - L[u] / sup) * 100;
-  if (ucPct < cfg.ucMin || ucPct > cfg.uc) return null;                    // a clear dip, not range noise
-  let inRangeBefore = false;
-  for (let j = u - 3; j < u; j++) { if (C[j] < sup * (1 - cfg.uc / 100)) return null; if (C[j] >= sup) inRangeBefore = true; }
-  if (!inRangeBefore) return null;                                          // must drop out of the range, not drift down
-  // context: an advance into the range, near the highs
-  let pre = Infinity; for (let j = Math.max(0, start - 60); j < start; j++) pre = Math.min(pre, L[j]);
-  const runUp = (top / pre - 1) * 100;
-  if (runUp < cfg.mom) return null;
-  // the advance leads into the base: price before the range was clearly lower
-  if (C[Math.max(0, start - 20)] > sup * 1.02) return null;
-  // the range is a base AT THE TOP: its high is the 52-week high (or within nearHi %), and that
-  // high was made at the end of the advance, i.e. inside the range or just before it started
-  let hi52 = 0, hiAt = -1; for (let j = Math.max(0, k - 251); j <= k; j++) if (H[j] >= hi52) { hi52 = H[j]; hiAt = j; }
-  if (top < hi52 * (1 - cfg.nearHi / 100)) return null;
-  if (hiAt < start - 10) return null;
-  // what happened after the undercut
-  let r = -1;
-  for (let j = u; j <= k; j++) if (C[j] > sup) { r = j; break; }
-  for (let j = u + 1; j <= k; j++) if (L[j] < L[u]) return null;            // undercut low broken = failed
-  const daysBelow = (r < 0 ? k : r) - u;
-  if (daysBelow > 3) return null;                                           // a shakeout snaps back fast
+
+  let status, b, r = -1;
   const posK = H[k] > L[k] ? (C[k] - L[k]) / (H[k] - L[k]) : 0;
-  let status;
-  if (r < 0) {
-    // watch only when today already turns up from the undercut (green, closing in the upper half)
-    if (k - u > 2 || !(C[k] > c[k].open && posK >= 0.5)) return null;
-    status = "watch";
-  } else if (r === k) {
-    if (posK < 0.5 || !(C[k] > c[k].open) || !(C[k] > C[k - 1])) return null;   // a strong up day, not a doji
-    status = "reclaim";
+  if (isUndercut) {
+    b = base;
+    for (let j = u; j <= k; j++) if (C[j] > b.sup) { r = j; break; }
+    for (let j = u + 1; j <= k; j++) if (L[j] < L[u]) return fail("broken");
+    if ((r < 0 ? k : r) - u > 3) return fail("slow");
+    if (r < 0) {
+      if (k - u > 2 || !(C[k] > c[k].open && posK >= 0.5)) return fail("notup");
+      status = "watch";
+    } else if (r === k) {
+      if (posK < 0.5 || !(C[k] > c[k].open) || !(C[k] > C[k - 1])) return fail("weak");
+      status = "reclaim";
+    } else if (close > b.top) status = "breakout";
+    else if (close >= b.sup) status = "inrange";
+    else return fail("fellback");
+    if (close < s50 * (status === "watch" ? 0.95 : status === "reclaim" ? 0.98 : 1)) return fail("below50");
+  } else {
+    // B) no undercut yet: is there a base at the top right now, with price in its lower part?
+    b = findBase(k);
+    if (!b) return fail(base && why ? why : "norange");
+    const w = checkBase(b);
+    if (w) return fail(w);
+    if (close > b.sup + 0.5 * (b.top - b.sup)) return fail("noundercut");
+    status = "base";
   }
-  else if (close > top) status = "breakout";
-  else if (close >= sup) status = "inrange";
-  else return null;                                                         // fell back under the range
-  if (cfg.show !== "all" && cfg.show !== status && !(cfg.show === "reclaim" && status === "inrange")) return null;
-  const s50 = smaAt(C, k, 50);
-  if (!(s50 > smaAt(C, k - 20, 50))) return null;                           // 50-day still rising today
-  if (close < s50 * (status === "watch" ? 0.95 : status === "reclaim" ? 0.98 : 1)) return null;   // at / above the 50-day
+  if (cfg.show !== "all" && cfg.show !== status && !(cfg.show === "reclaim" && status === "inrange") && !(cfg.show === "watch" && status === "base")) return fail("noundercut");
+
+  const { top, sup, R, tests, runUp } = b;
   const rVol = r >= 0 ? V[r] / v20 : null;
   const ext = (close / top - 1) * 100;
+  const ucP = status === "base" ? 0 : ucPct;
   let entry, sl, label;
-  if (status === "watch") { entry = sup * 1.002; sl = L[u]; label = "Buy as it reclaims the range low"; }
+  if (status === "base") { entry = sup * 1.002; sl = sup * 0.95; label = "Base at the top — watch for an undercut of the low and a snap-back"; }
+  else if (status === "watch") { entry = sup * 1.002; sl = L[u]; label = "Undercut and turning up: buy as it closes back above the range low"; }
   else if (status === "reclaim") { entry = close; sl = L[u]; label = "Reclaimed the range low today"; }
   else if (status === "inrange") { entry = top * 1.002; sl = L[u]; label = "Back in the range: next entry above the top"; }
   else { entry = Math.max(close, top); sl = top * 0.985; label = ext > 6 ? "Broke out — extended, wait for a pullback" : "Broke out above the range"; }
   const risk = (entry - sl) / entry * 100;
-  const tags = [{ watch: "Watch: undercut", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: ext > 6 ? "Breakout (extended)" : "Breakout" }[status],
-    `Undercut ${ucPct.toFixed(1)}%`, `${Math.round(R / 5)}w range, ${((top / sup - 1) * 100).toFixed(0)}% deep`, `${tests} tests of the low`,
-    ...(rVol !== null && rVol >= 1.3 ? [`Reclaim vol ${rVol.toFixed(1)}×`] : []), ...(close > s50 ? [] : ["Under 50-day"]), `Run-up ${runUp.toFixed(0)}%`];
+  const tags = [{ base: "Base at top", watch: "Watch: undercut", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: ext > 6 ? "Breakout (extended)" : "Breakout" }[status],
+    ...(status === "base" ? [`${((close / sup - 1) * 100).toFixed(1)}% above the low`] : [`Undercut ${ucP.toFixed(1)}%`]),
+    `${Math.round(R / 5)}w base, ${((top / sup - 1) * 100).toFixed(0)}% deep`, `${tests} tests of the low`,
+    ...(rVol !== null && rVol >= 1.3 ? [`Reclaim vol ${rVol.toFixed(1)}×`] : []), `Run-up ${runUp.toFixed(0)}%`];
   return {
-    mode: "undercut", status, label, close, date: ymd(c[k].date), top, sup, ucLow: L[u], ucDate: ymd(c[u].date),
+    fails: [], mode: "undercut", status, label, close, date: ymd(c[k].date), top, sup, ucLow: status === "base" ? null : L[u], ucDate: status === "base" ? null : ymd(c[u].date),
     reclaimDate: r >= 0 ? ymd(c[r].date) : null, entry, sl, risk: Math.round(risk * 10) / 10,
-    ucPct: Math.round(ucPct * 10) / 10, weeks: Math.round(R / 5), depth: Math.round((top / sup - 1) * 1000) / 10, tests,
+    ucPct: Math.round(ucP * 10) / 10, weeks: Math.round(R / 5), depth: Math.round((top / sup - 1) * 1000) / 10, tests,
     runUp: Math.round(runUp), rVol: rVol === null ? null : Math.round(rVol * 10) / 10, ext: Math.round(ext * 10) / 10,
     dist: Math.round((entry - close) / entry * 1000) / 10, turn: Math.round(turn * 10) / 10, tags,
   };
@@ -2676,12 +2693,14 @@ async function showVcpAt(sym, n, force) {
     add("Stop", `\u20B9${r.sl.toFixed(2)} (${r.status === "breakout" ? "under the range top" : "under the undercut low"})`);
     add("Risk", `${r.risk.toFixed(1)}%`, r.risk > 8 ? "down" : "");
     add("Range", `\u20B9${r.sup.toFixed(2)} \u2013 \u20B9${r.top.toFixed(2)} \u00B7 ${r.weeks} weeks, ${r.depth}% deep`);
-    add("Undercut", `${fmtD(r.ucDate)} \u00B7 low \u20B9${r.ucLow.toFixed(2)} (${r.ucPct}% under)`);
+    if (r.ucDate) add("Undercut", `${fmtD(r.ucDate)} \u00B7 low \u20B9${r.ucLow.toFixed(2)} (${r.ucPct}% under)`);
     if (r.reclaimDate) add("Reclaimed", `${fmtD(r.reclaimDate)}${r.rVol !== null ? ` \u00B7 volume ${r.rVol}\u00D7` : ""}`, r.rVol >= 1.3 ? "up" : "");
     add("Tests of the low", String(r.tests));
     add("Run-up before", `${r.runUp}%`);
     add("Turnover 20d", `\u20B9${r.turn} Cr`);
-    $("cwNote").textContent = r.status === "watch"
+    $("cwNote").textContent = r.status === "base"
+      ? "A flat base at the top of an advance, price in its lower half. Not an entry yet: wait for a quick dip under the range low that closes back above it (then it moves to Watch / Reclaim)."
+      : r.status === "watch"
       ? "It has dipped under the range low (stops run). Entry 1 comes only if it closes back above the range low; if it keeps falling or the undercut low breaks, skip."
       : r.status === "breakout"
       ? "Entry 2: through the range top. Best on a hold or small pullback to the top line, with the stop just under it. Skip if extended."
@@ -3447,7 +3466,7 @@ async function runVcp() {
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
       let r = c.length ? (mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
-      if ((mode === "vcp" || mode === "flag") && r) {
+      if ((mode === "vcp" || mode === "flag" || mode === "undercut") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
       }
@@ -3462,8 +3481,8 @@ async function runVcp() {
   try { wakeLock?.release(); } catch {}
   vcpBusy = false;
   $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${(mode === "vcp" || mode === "base" || mode === "canslim") && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
-  if (mode === "vcp" || mode === "flag") {
-    const RULES = mode === "flag" ? FLAG_RULES : VCP_RULES;
+  if (mode === "vcp" || mode === "flag" || mode === "undercut") {
+    const RULES = mode === "flag" ? FLAG_RULES : mode === "undercut" ? UC_RULES : VCP_RULES;
     const items = Object.entries(tally).filter(([k]) => k !== "ok").sort((a, b) => b[1] - a[1]);
     $("vWhy").hidden = !items.length;
     $("vWhyList").innerHTML = "";
@@ -3479,7 +3498,7 @@ async function runVcp() {
   renderVcp();
 }
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
-const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3 };
+const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3, base: 4 };
 const sortVcp = arr => [...arr].sort((a, b) => a.mode === "undercut"
   ? (UC_ORDER[a.status] - UC_ORDER[b.status]) || ((a.ext > 6) - (b.ext > 6)) || (a.risk - b.risk)
   : a.mode === "start"
@@ -3577,7 +3596,7 @@ function renderVcp() {
       row.querySelector("b").textContent = r.symbol;
       const tg = row.querySelector(".itags");
       r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "reclaim" ? " ib" : r.status === "watch" ? " pd" : r.ext > 6 ? " miss" : "") : t.startsWith("Below") ? " miss" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `${r.status === "watch" ? "Buy above" : r.status === "inrange" ? "Next: above" : "Entry"} \u20B9${r.entry.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 range \u20B9${r.sup.toFixed(1)}\u2013${r.top.toFixed(1)}`;
+      row.querySelector(".ilev").textContent = `${r.status === "base" ? "Watch the low" : r.status === "watch" ? "Buy above" : r.status === "inrange" ? "Next: above" : "Entry"} \u20B9${r.entry.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 range \u20B9${r.sup.toFixed(1)}\u2013${r.top.toFixed(1)}`;
       const dd = row.querySelector(".vdist");
       dd.textContent = r.status === "breakout" ? `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% over top` : r.status === "reclaim" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to entry`;
       if (r.status === "reclaim" || r.status === "breakout") dd.classList.add("up");
