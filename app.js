@@ -3826,3 +3826,143 @@ renderVcp();
 syncNow("open");
 renderWatch();
 refreshPrices();
+
+/* ───────── Market breadth (data/breadth.json, written every weekday evening by GitHub Actions) ─────────
+ * Like Manas Arora's breadth table: how many NSE stocks moved 4.5%+ today, 20%+ in 5 days, and how
+ * many close above / below their 20, 50 and 200-day averages. A jump in "above 20-day" is the market
+ * itself breaking out. */
+let BREADTH = null, brShown = 15, brSel = null;
+async function loadBreadth(force) {
+  $("brNote").textContent = "Loading breadth data…";
+  try {
+    const res = await fetch(`data/breadth.json${force ? `?t=${Date.now()}` : ""}`, { cache: "no-cache" });
+    BREADTH = res.ok ? await res.json() : null;
+  } catch { BREADTH = null; }
+  renderBreadth();
+}
+const brPct = (a, b) => (a + b) ? Math.round(a / (a + b) * 100) : 0;
+function renderBreadth() {
+  const R = BREADTH && Array.isArray(BREADTH.rows) ? BREADTH.rows : [];
+  if (!R.length) {
+    $("brNote").textContent = "No breadth data yet. It is created automatically by the “Update market breadth” action on GitHub (every weekday 4:30 pm IST, and once right after upload).";
+    $("brTiles").innerHTML = ""; $("brTable").innerHTML = ""; $("brMore").hidden = true; $("brChartCap").textContent = "";
+    return;
+  }
+  const t = R[0], y = R[1] || null;
+  const upd = new Date(BREADTH.updated);
+  $("brNote").textContent = `Latest: ${fmtD(t.d)} · ${t.n.toLocaleString("en-IN")} NSE stocks traded · updated ${upd.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`;
+  // headline tiles
+  const tiles = $("brTiles"); tiles.innerHTML = "";
+  const tile = (label, val, sub, cls) => {
+    const d = document.createElement("div"); d.className = "brtile";
+    d.innerHTML = "<small></small><b></b><span></span>";
+    d.querySelector("small").textContent = label; d.querySelector("b").textContent = val;
+    const s = d.querySelector("span"); s.textContent = sub || ""; if (cls) s.className = cls;
+    tiles.appendChild(d);
+  };
+  const jump = y && y.a20 ? Math.round((t.a20 / y.a20 - 1) * 100) : null;
+  tile("Above 20-day avg", t.a20.toLocaleString("en-IN"), jump === null ? `${brPct(t.a20, t.b20)}%` : `${jump >= 0 ? "▲ +" : "▼ "}${jump}% vs yesterday`, jump === null ? "" : jump >= 0 ? "up" : "down");
+  tile("Up 4.5%+ / Down 4.5%+", `${t.up45} / ${t.dn45}`, t.up45 >= t.dn45 ? "more up" : "more down", t.up45 >= t.dn45 ? "up" : "down");
+  tile("Above 50-day avg", `${brPct(t.a50, t.b50)}%`, `${t.a50.toLocaleString("en-IN")} stocks`);
+  tile("52-week highs / lows", `${t.hi52} / ${t.lo52}`, t.hi52 >= t.lo52 ? "more highs" : "more lows", t.hi52 >= t.lo52 ? "up" : "down");
+  drawBreadthChart();
+  // table
+  const tb = $("brTable"); tb.innerHTML = "";
+  const head = tb.insertRow();
+  for (const h of ["Date", "Up 4.5%+", "Down 4.5%+", "Up 20% in 5d", "Down 20% in 5d", "Above 20d", "Below 20d", "% above 50d", "% above 200d", "52w highs", "52w lows"]) {
+    const th = document.createElement("th"); th.textContent = h; head.appendChild(th);
+  }
+  const L = BREADTH.lists || {};
+  R.slice(0, brShown).forEach((r, i) => {
+    const p = R[i + 1];
+    const tr = tb.insertRow();
+    const cell = (txt, cls, list, title) => {
+      const td = tr.insertCell();
+      if (list && list.length) {
+        const b = document.createElement("button"); b.type = "button"; b.textContent = txt;
+        b.onclick = () => showBreadthList(title, list, r.d);
+        td.appendChild(b);
+      } else td.textContent = txt;
+      if (cls) td.className = cls;
+      return td;
+    };
+    const l = L[r.d] || {};
+    cell(fmtD(r.d));
+    cell(r.up45, r.up45 > r.dn45 ? "up" : "", l.up45, `Up 4.5%+ on ${fmtD(r.d)}`);
+    cell(r.dn45, r.dn45 > r.up45 ? "down" : "", l.dn45, `Down 4.5%+ on ${fmtD(r.d)}`);
+    cell(r.up20, r.up20 > r.dn20 ? "up" : "", l.up20, `Up 20%+ in 5 days to ${fmtD(r.d)}`);
+    cell(r.dn20, r.dn20 > r.up20 ? "down" : "", l.dn20, `Down 20%+ in 5 days to ${fmtD(r.d)}`);
+    const k = cell(r.a20, "key");
+    if (p && p.a20) { const ch = Math.round((r.a20 / p.a20 - 1) * 100); const s = document.createElement("small"); s.textContent = `${ch >= 0 ? "+" : ""}${ch}%`; s.className = ch >= 0 ? "up" : "down"; k.appendChild(s); }
+    cell(r.b20);
+    cell(`${brPct(r.a50, r.b50)}%`);
+    cell(`${brPct(r.a200, r.b200)}%`);
+    cell(r.hi52, r.hi52 > r.lo52 ? "up" : "", l.hi52, `52-week highs on ${fmtD(r.d)}`);
+    cell(r.lo52, r.lo52 > r.hi52 ? "down" : "");
+  });
+  $("brMore").hidden = brShown >= R.length;
+}
+function drawBreadthChart() {
+  const cv = $("brChart"), R = (BREADTH.rows || []).slice(0, 60).reverse();
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 600, H = 150;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  const L = 30, Rr = W - 8, T = 8, B = H - 18;
+  const X = i => L + (R.length > 1 ? i / (R.length - 1) : 0.5) * (Rr - L), Y = v => B - v / 100 * (B - T);
+  ctx.font = "10px -apple-system, Helvetica, Arial, sans-serif"; ctx.fillStyle = "#6B7280"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (const v of [0, 25, 50, 75, 100]) {
+    ctx.strokeStyle = v === 50 ? "#C9CED8" : "#EEF0F4"; ctx.lineWidth = 1; ctx.setLineDash(v === 50 ? [4, 3] : []);
+    ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(Rr, Y(v)); ctx.stroke(); ctx.fillText(`${v}%`, L - 4, Y(v));
+  }
+  ctx.setLineDash([]);
+  if (R.length) {
+    ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillText(fmtD(R[0].d), L, B + 4); ctx.textAlign = "right"; ctx.fillText(fmtD(R[R.length - 1].d), Rr, B + 4);
+    ctx.strokeStyle = "#1A4DB3"; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.beginPath();
+    R.forEach((r, i) => { const v = brPct(r.a20, r.b20); i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)); });
+    ctx.stroke();
+    const last = R[R.length - 1]; ctx.fillStyle = "#1A4DB3"; ctx.beginPath(); ctx.arc(X(R.length - 1), Y(brPct(last.a20, last.b20)), 4, 0, Math.PI * 2); ctx.fill();
+  }
+  $("brChartCap").textContent = "% of stocks above their 20-day average (last 60 days). Above 50% = most stocks rising; a sharp jump from a low = breadth breaking out. Tap the chart for a day’s value.";
+  cv.onpointerdown = cv.onpointermove = e => {
+    if (e.type === "pointermove" && e.pointerType !== "mouse") return;
+    const rect = cv.getBoundingClientRect(), x = e.clientX - rect.left;
+    const i = Math.max(0, Math.min(R.length - 1, Math.round((x - L) / ((Rr - L) / Math.max(1, R.length - 1)))));
+    const r = R[i]; if (!r) return;
+    drawBreadthChartBase(ctx, R, X, Y, L, Rr, T, B, W, H, i);
+    $("brChartCap").textContent = `${fmtD(r.d)}: ${brPct(r.a20, r.b20)}% above 20-day (${r.a20} stocks) · up 4.5%+ ${r.up45}, down 4.5%+ ${r.dn45}`;
+  };
+}
+function drawBreadthChartBase(ctx, R, X, Y, L, Rr, T, B, W, H, i) {
+  const cv = $("brChart");
+  cv.onpointerdown = cv.onpointermove = null;
+  drawBreadthChart();                                    // redraw clean, then the crosshair
+  ctx.strokeStyle = "#9CA3AF"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X(i), T); ctx.lineTo(X(i), B); ctx.stroke();
+  ctx.fillStyle = "#fff"; ctx.strokeStyle = "#1A4DB3"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(X(i), Y(brPct(R[i].a20, R[i].b20)), 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+}
+function showBreadthList(title, list, day) {
+  brSel = { title, syms: list.map(x => x[0]), list, day };
+  $("brListTitle").textContent = `${title} · ${list.length} stock${list.length === 1 ? "" : "s"}`;
+  const box = $("brSyms"); box.innerHTML = "";
+  for (const [s, v] of list) {
+    const b = document.createElement("button"); b.type = "button";
+    b.textContent = `${s} ${v >= 0 ? "+" : ""}${v}%`;
+    b.onclick = () => openChartWin(s, breadthSource());
+    box.appendChild(b);
+  }
+  $("brList").hidden = false;
+  $("brList").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+function breadthSource() {
+  const m = new Map(brSel.list);
+  return { kind: "list", name: brSel.title, symbols: brSel.syms,
+    item: sym => ({ symbol: sym, addedOn: brSel.day, note: `${brSel.title}: ${m.get(sym) >= 0 ? "+" : ""}${m.get(sym)}%` }) };
+}
+$("brOpen").onclick = () => { if (brSel && brSel.syms.length) openChartWin(brSel.syms[0], breadthSource()); };
+$("brPdf").onclick = () => { if (brSel && brSel.syms.length) makeWlPdf([{ name: brSel.title, symbols: brSel.syms }]); };
+$("brListClose").onclick = () => { $("brList").hidden = true; };
+$("brMore").onclick = () => { brShown += 30; renderBreadth(); };
+$("brRefresh").onclick = () => loadBreadth(true);
+window.addEventListener("resize", () => { if (BREADTH && BREADTH.rows && BREADTH.rows.length) drawBreadthChart(); });
+loadBreadth();
