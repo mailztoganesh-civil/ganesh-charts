@@ -670,6 +670,8 @@ function ucSettings() {
     maxR: clampInt($("uMaxW").value, 3, 40, 12) * 5,
     depth: clampInt($("uDepth").value, 4, 40, 20),
     uc: Math.max(0.5, parseFloat($("uUc").value) || 8),
+    ucMin: Math.max(0.3, parseFloat($("uUcMin").value) || 1.5),
+    nearHi: Math.max(0, parseFloat($("uNearHi").value) || 5),
     look: clampInt($("uLook").value, 2, 20, 10),
     mom: clampInt($("uMom").value, 0, 300, 20),
     turn: Math.max(0, parseFloat($("uTurn").value) || 0),
@@ -711,7 +713,7 @@ function analyseUndercut(c, cfg) {
   const third = Math.max(3, Math.floor(R / 3));
   const avgC = (a, b) => { let x = 0; for (let j = a; j <= b; j++) x += C[j]; return x / (b - a + 1); };
   const drift = (avgC(end - third + 1, end) / avgC(start, start + third - 1) - 1) * 100;
-  if (drift < -cfg.depth * 0.35) return null;
+  if (drift < -cfg.depth * 0.25) return null;
   // uptrend (stage 2): the 50-day rising and above the 200-day; range top near the 52-week high
   const s50a = smaAt(C, end, 50), s50b = smaAt(C, end - 20, 50), s200 = smaAt(C, end, 200);
   if (!(s50a > s50b)) return null;
@@ -719,7 +721,7 @@ function analyseUndercut(c, cfg) {
   if (avgC(end - 4, end) < s50a * 0.95) return null;                       // range sitting on / above the 50-day
   // the undercut: below the range low, but a shakeout rather than a breakdown
   const ucPct = (1 - L[u] / sup) * 100;
-  if (ucPct < 0.3 || ucPct > cfg.uc) return null;
+  if (ucPct < cfg.ucMin || ucPct > cfg.uc) return null;                    // a clear dip, not range noise
   let inRangeBefore = false;
   for (let j = u - 3; j < u; j++) { if (C[j] < sup * (1 - cfg.uc / 100)) return null; if (C[j] >= sup) inRangeBefore = true; }
   if (!inRangeBefore) return null;                                          // must drop out of the range, not drift down
@@ -727,8 +729,13 @@ function analyseUndercut(c, cfg) {
   let pre = Infinity; for (let j = Math.max(0, start - 60); j < start; j++) pre = Math.min(pre, L[j]);
   const runUp = (top / pre - 1) * 100;
   if (runUp < cfg.mom) return null;
-  let hi52 = 0; for (let j = Math.max(0, k - 251); j <= k; j++) hi52 = Math.max(hi52, H[j]);
-  if (top < hi52 * 0.85) return null;
+  // the advance leads into the base: price before the range was clearly lower
+  if (C[Math.max(0, start - 20)] > sup * 1.02) return null;
+  // the range is a base AT THE TOP: its high is the 52-week high (or within nearHi %), and that
+  // high was made at the end of the advance, i.e. inside the range or just before it started
+  let hi52 = 0, hiAt = -1; for (let j = Math.max(0, k - 251); j <= k; j++) if (H[j] >= hi52) { hi52 = H[j]; hiAt = j; }
+  if (top < hi52 * (1 - cfg.nearHi / 100)) return null;
+  if (hiAt < start - 10) return null;
   // what happened after the undercut
   let r = -1;
   for (let j = u; j <= k; j++) if (C[j] > sup) { r = j; break; }
@@ -742,7 +749,7 @@ function analyseUndercut(c, cfg) {
     if (k - u > 2 || !(C[k] > c[k].open && posK >= 0.5)) return null;
     status = "watch";
   } else if (r === k) {
-    if (posK < 0.5) return null;                                            // weak reclaim
+    if (posK < 0.5 || !(C[k] > c[k].open) || !(C[k] > C[k - 1])) return null;   // a strong up day, not a doji
     status = "reclaim";
   }
   else if (close > top) status = "breakout";
@@ -750,6 +757,8 @@ function analyseUndercut(c, cfg) {
   else return null;                                                         // fell back under the range
   if (cfg.show !== "all" && cfg.show !== status && !(cfg.show === "reclaim" && status === "inrange")) return null;
   const s50 = smaAt(C, k, 50);
+  if (!(s50 > smaAt(C, k - 20, 50))) return null;                           // 50-day still rising today
+  if (close < s50 * (status === "watch" ? 0.95 : status === "reclaim" ? 0.98 : 1)) return null;   // at / above the 50-day
   const rVol = r >= 0 ? V[r] / v20 : null;
   const ext = (close / top - 1) * 100;
   let entry, sl, label;
@@ -760,7 +769,7 @@ function analyseUndercut(c, cfg) {
   const risk = (entry - sl) / entry * 100;
   const tags = [{ watch: "Watch: undercut", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: ext > 6 ? "Breakout (extended)" : "Breakout" }[status],
     `Undercut ${ucPct.toFixed(1)}%`, `${Math.round(R / 5)}w range, ${((top / sup - 1) * 100).toFixed(0)}% deep`, `${tests} tests of the low`,
-    ...(rVol !== null && rVol >= 1.3 ? [`Reclaim vol ${rVol.toFixed(1)}×`] : []), ...(close > s50 ? [] : ["Below 50-day"]), `Run-up ${runUp.toFixed(0)}%`];
+    ...(rVol !== null && rVol >= 1.3 ? [`Reclaim vol ${rVol.toFixed(1)}×`] : []), ...(close > s50 ? [] : ["Under 50-day"]), `Run-up ${runUp.toFixed(0)}%`];
   return {
     mode: "undercut", status, label, close, date: ymd(c[k].date), top, sup, ucLow: L[u], ucDate: ymd(c[u].date),
     reclaimDate: r >= 0 ? ymd(c[r].date) : null, entry, sl, risk: Math.round(risk * 10) / 10,
@@ -3692,7 +3701,7 @@ function vcpModeUI() {
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
   $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut";
   if (m === "undercut") {
-    $("vDesc").textContent = "Range undercut & rally (TraderLion): a stock in an uptrend (rising 50-day above the 200-day) moves sideways in a flat range near its high, then dips under the range low for 1\u20133 days (a shakeout that runs the stops) and snaps back. Falling stocks making new lows are excluded. Entry 1: close back above the range low, stop under the undercut low. Entry 2: above the range top, stop just under it. \u201CWatch\u201D = undercut now, not yet reclaimed.";
+    $("vDesc").textContent = "Range undercut & rally (TraderLion): a stock in an uptrend (rising 50-day above the 200-day) builds a flat base AT THE TOP (range high = 52-week high, right after the advance), then dips under the range low for 1\u20133 days (a shakeout that runs the stops) and snaps back. Falling stocks making new lows are excluded. Entry 1: close back above the range low, stop under the undercut low. Entry 2: above the range top, stop just under it. \u201CWatch\u201D = undercut now, not yet reclaimed.";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
     return;
   }

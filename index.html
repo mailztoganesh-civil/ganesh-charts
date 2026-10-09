@@ -404,10 +404,11 @@
       <div class="vgrid" id="setUc" hidden>
         <label>Show <select id="uShow"><option value="all">All stages</option><option value="watch">Watch: undercut now (before entry)</option><option value="reclaim">Reclaimed the range low</option><option value="breakout">Broke out above the range</option></select></label>
         <label>Range length <input type="number" id="uMinW" value="3" min="2" max="20"> to <input type="number" id="uMaxW" value="12" min="3" max="40"> weeks</label>
-        <label>Range no deeper than <input type="number" id="uDepth" value="20" min="4" max="40"> %</label>
-        <label>Undercut up to <input type="number" id="uUc" value="8" min="0.5" step="0.5"> % below the range low</label>
+        <label>Range no deeper than <input type="number" id="uDepth" value="15" min="4" max="40"> %</label>
+        <label>Undercut at least <input type="number" id="uUcMin" value="1.5" min="0.3" step="0.5"> % and up to <input type="number" id="uUc" value="8" min="0.5" step="0.5"> % below the range low</label>
         <label>Undercut within the last <input type="number" id="uLook" value="10" min="2" max="20"> days</label>
         <label>Run-up into the range ≥ <input type="number" id="uMom" value="20" min="0" max="300"> %</label>
+        <label>Range top within <input type="number" id="uNearHi" value="5" min="0" max="30" step="1"> % of the 52-week high (base at the top)</label>
         <label>Min 20-day turnover ₹ <input type="number" id="uTurn" value="5" min="0"> Cr</label>
         <label>Min price ₹ <input type="number" id="uMinPrice" value="20" min="0"></label>
       </div>
@@ -578,7 +579,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 46 · stricter undercut & rally</p>
+  <p class="small" style="text-align:center">Version 48 · undercut & rally: base at the top</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -646,8 +647,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=46"></script>
-<script src="app.js?v=46"></script>
+<script src="symbols.js?v=48"></script>
+<script src="app.js?v=48"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
