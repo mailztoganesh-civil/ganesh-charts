@@ -685,7 +685,10 @@ const UC_RULES = {
   nottop: "Base not at the top (range high below the 52-week high)", runup: "No advance into the base",
   noundercut: "No undercut of the base low yet", deep: "Undercut too deep (a breakdown)", slow: "Too long under the range (no quick snap-back)",
   broken: "Undercut low broken again", weak: "Reclaim day weak (red / doji / closed low)", below50: "Too far under the 50-day",
-  fellback: "Fell back under the range", notup: "Still under the range, not turning up yet",
+  fellback: "Fell back under the range",
+  notup: "Still under the range, not turning up yet", otherstage: "Undercut found, but a different stage than chosen in Show",
+  basefalling: "Base at top, but falling hard right now",
+  slide: "Slow slide to the low, not a sudden drop from the upper half of the range",
 };
 
 function analyseUndercut(c, cfg) {
@@ -701,7 +704,7 @@ function analyseUndercut(c, cfg) {
   if (!(s50 > s50p) || (!isNaN(s200) && !(s50 > s200))) return fail("trend");
 
   // separate tests of a level (touches at least 5 bars apart)
-  const countTests = (a, b, lv) => { let t = 0, last = -99; for (let j = a; j <= b; j++) if (L[j] <= lv * 1.025 && j - last >= 5) { t++; last = j; } return t; };
+  const testsAt = (a, b, lv) => { const out = []; for (let j = a; j <= b; j++) if (L[j] <= lv * 1.025 && (!out.length || j - out[out.length - 1] >= 5)) out.push(j); return out; };
   const avgC = (a, b) => { let x = 0; for (let j = a; j <= b; j++) x += C[j]; return x / (b - a + 1); };
   // longest flat window ending at `end`: within the depth limit, low tested twice, low not at the very start
   const findBase = end => {
@@ -712,8 +715,11 @@ function analyseUndercut(c, cfg) {
       if (L[j] < lo) { lo = L[j]; loAt = j; }
       if ((hi / lo - 1) * 100 > cfg.depth) break;
       if (R < cfg.minR || loAt < j + Math.ceil(R * 0.2)) continue;
-      const t = countTests(j, end, lo);
-      if (t >= 2) best = { R, top: hi, sup: lo, start: j, end, tests: t };
+      // the floor is tested in BOTH halves of the range (a level held over time, not one falling leg)
+      const ts = testsAt(j, end, lo), mid = j + R / 2;
+      // ...and the top line is also hit at least twice: price swings between both lines (the zig-zag in the video)
+      let tops = 0, lastT = -99; for (let x = j; x <= end; x++) if (H[x] >= hi * 0.975 && x - lastT >= 5) { tops++; lastT = x; }
+      if (ts.length >= 2 && ts[0] <= mid && ts[ts.length - 1] >= mid && tops >= 2) best = { R, top: hi, sup: lo, start: j, end, tests: ts.length, tops };
     }
     return best;
   };
@@ -721,7 +727,7 @@ function analyseUndercut(c, cfg) {
   let hi52 = 0, hiAt = -1; for (let j = Math.max(0, k - 251); j <= k; j++) if (H[j] >= hi52) { hi52 = H[j]; hiAt = j; }
   const checkBase = b => {
     const third = Math.max(3, Math.floor(b.R / 3));
-    if ((avgC(b.end - third + 1, b.end) / avgC(b.start, b.start + third - 1) - 1) * 100 < -cfg.depth * 0.25) return "falling";
+    if ((avgC(b.end - third + 1, b.end) / avgC(b.start, b.start + third - 1) - 1) * 100 < -cfg.depth * 0.2) return "falling";
     if (b.top < hi52 * (1 - cfg.nearHi / 100) || hiAt < b.start - 10) return "nottop";
     let pre = Infinity; for (let j = Math.max(0, b.start - 60); j < b.start; j++) pre = Math.min(pre, L[j]);
     b.runUp = (b.top / pre - 1) * 100;
@@ -739,6 +745,9 @@ function analyseUndercut(c, cfg) {
   let isUndercut = !!base && !why && ucPct >= cfg.ucMin;
   if (isUndercut && ucPct > cfg.uc) return fail("deep");
   if (isUndercut) {
+    // the undercut is a sudden flush FROM INSIDE the range (as in the video), not a slow slide along the low
+    let maxBefore = -Infinity; for (let j = u - 5; j < u; j++) maxBefore = Math.max(maxBefore, C[j]);
+    if (maxBefore < base.sup + 0.5 * (base.top - base.sup)) return fail("slide");     // dropped from the upper half
     let inRangeBefore = false;
     for (let j = u - 3; j < u; j++) { if (C[j] < base.sup * (1 - cfg.uc / 100)) return fail("deep"); if (C[j] >= base.sup) inRangeBefore = true; }
     if (!inRangeBefore) isUndercut = false;
@@ -768,9 +777,11 @@ function analyseUndercut(c, cfg) {
     const w = checkBase(b);
     if (w) return fail(w);
     if (close > b.sup + 0.5 * (b.top - b.sup)) return fail("noundercut");
+    if (close < b.sup || (C[k] / C[k - 1] - 1) * 100 < -3 || (C[k] / C[k - 3] - 1) * 100 < -6) return fail("basefalling");
     status = "base";
   }
-  if (cfg.show !== "all" && cfg.show !== status && !(cfg.show === "reclaim" && status === "inrange") && !(cfg.show === "watch" && status === "base")) return fail("noundercut");
+  const shown = cfg.show === "all" || cfg.show === status || (cfg.show === "undercut" && status !== "base") || (cfg.show === "reclaim" && status === "inrange");
+  if (!shown) return fail(status === "base" ? "noundercut" : "otherstage");
 
   const { top, sup, R, tests, runUp } = b;
   const rVol = r >= 0 ? V[r] / v20 : null;
@@ -785,7 +796,7 @@ function analyseUndercut(c, cfg) {
   const risk = (entry - sl) / entry * 100;
   const tags = [{ base: "Base at top", watch: "Watch: undercut", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: ext > 6 ? "Breakout (extended)" : "Breakout" }[status],
     ...(status === "base" ? [`${((close / sup - 1) * 100).toFixed(1)}% above the low`] : [`Undercut ${ucP.toFixed(1)}%`]),
-    `${Math.round(R / 5)}w base, ${((top / sup - 1) * 100).toFixed(0)}% deep`, `${tests} tests of the low`,
+    `${Math.round(R / 5)}w base, ${((top / sup - 1) * 100).toFixed(0)}% deep`, `${tests} tests of the low, ${b.tops} of the top`,
     ...(rVol !== null && rVol >= 1.3 ? [`Reclaim vol ${rVol.toFixed(1)}×`] : []), `Run-up ${runUp.toFixed(0)}%`];
   return {
     fails: [], mode: "undercut", status, label, close, date: ymd(c[k].date), top, sup, ucLow: status === "base" ? null : L[u], ucDate: status === "base" ? null : ymd(c[u].date),
@@ -1863,7 +1874,7 @@ function drawChart(canvas, symbol, interval, candles, bars, mark) {
 const PW = 842, PH = 1190, M = 24, HDR = 52, FTR = 28;
 const CHART_PDF_H = (PH - M * 2 - HDR - FTR - 8) / 2;
 
-function pdfPage(doc, stock, dailyImg, weeklyImg, dN, wN) {
+function pdfPage(doc, stock, dailyImg, weeklyImg, dN, wN, note) {
   doc.setFillColor(20, 51, 140); doc.rect(0, 0, PW, HDR, "F");
   doc.setFont("helvetica", "bold"); doc.setFontSize(26); doc.setTextColor(255, 255, 255);
   doc.text(`NSE: ${stock}`, M, 12, { baseline: "top" });
@@ -1876,6 +1887,11 @@ function pdfPage(doc, stock, dailyImg, weeklyImg, dN, wN) {
   };
   const dY = M + HDR;
   label(`DAILY CHART  \u00B7  ${dN} days`, dY);
+  if (note) {                                   // scanner result (stage, entry, stop) next to the label
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(124, 58, 237);
+    const line = doc.splitTextToSize(note, PW - M * 2 - 190)[0];
+    doc.text(line, PW - M, dY + 2, { baseline: "top", align: "right" });
+  }
   doc.addImage(dailyImg, "JPEG", M, dY + 16, PW - M * 2, CHART_PDF_H);
   const wY = dY + 16 + CHART_PDF_H + 8;
   label(`WEEKLY CHART  \u00B7  ${wN} weeks`, wY);
@@ -2947,7 +2963,7 @@ async function generate(override, opts = {}) {
         if (!okD && !okW) noData.push(s);
         if (!first) doc.addPage([PW, PH], "portrait");
         first = false;
-        pdfPage(doc, s, di, wi, dBarsN, wBarsN);   // page goes straight into the PDF; images aren't kept
+        pdfPage(doc, s, di, wi, dBarsN, wBarsN, opts.notes && opts.notes[s]);   // page goes straight into the PDF; images aren't kept
       }
       done += batch.length;
       setP(`Processed ${done}/${stocks.length} stocks${parts > 1 ? ` (PDF ${p + 1} of ${parts})` : ""}...`);
@@ -3778,11 +3794,13 @@ $("vPdf").onclick = () => {
   if (!syms.length || state.busy) return;
   $("step3").hidden = false;
   $("step3").scrollIntoView({ behavior: "smooth", block: "start" });
-  generate(syms);
+  const notes = {};
+  for (const r of vcp.results) { try { notes[r.symbol] = scanItem(r).note; } catch {} }
+  generate(syms, { notes });
 };
 function scanItem(r) {
         const note = r.mode === "undercut"
-          ? `Undercut & rally (${r.status}): entry \u20B9${r.entry.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, range \u20B9${r.sup.toFixed(1)}-${r.top.toFixed(1)}`
+          ? `${({ base: "Base at top (no undercut yet)", watch: "Undercut, turning up", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: "Breakout" })[r.status]}: ${r.status === "base" ? "watch low" : "entry"} \u20B9${r.entry.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, range \u20B9${r.sup.toFixed(1)}-${r.top.toFixed(1)}${r.ucPct ? `, undercut ${r.ucPct}%` : ""}`
           : r.mode === "start"
           ? (r.ready ? `Manas watch ${r.score}: tomorrow open \u20B9${r.openLo.toFixed(1)}-${r.openHi.toFixed(1)}, buy above \u20B9${r.trigger.toFixed(2)}, stop day's low` : `Manas entry ${fmtD(r.entryDate)}: \u20B9${r.trigger.toFixed(2)}, stop LOD \u20B9${r.sl.toFixed(2)} (${r.risk}%)`)
           : r.mode === "canslim"
