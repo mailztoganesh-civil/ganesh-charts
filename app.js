@@ -693,7 +693,8 @@ function analyseUndercut(c, cfg) {
   if (end - cfg.minR < 60) return null;
   // pick the longest window that is a real sideways range: within the depth limit, its low tested
   // at least twice, and the low not at the very start (that would be the advance INTO the range)
-  const countTests = (a, b, sup) => { let t = 0, on = false; for (let j = a; j <= b; j++) { const x = L[j] <= sup * 1.025; if (x && !on) t++; on = x; } return t; };
+  // separate tests of the range low (touches at least 5 bars apart)
+  const countTests = (a, b, sup) => { let t = 0, last = -99; for (let j = a; j <= b; j++) if (L[j] <= sup * 1.025 && j - last >= 5) { t++; last = j; } return t; };
   let best = null, hi = -Infinity, lo = Infinity, loAt = -1;
   for (let R = 1; R <= cfg.maxR && end - R + 1 > 0; R++) {
     const j = end - R + 1;
@@ -706,27 +707,44 @@ function analyseUndercut(c, cfg) {
   }
   if (!best) return null;
   const { R, hi: top, lo: sup, start, tests } = best;
+  // a sideways range, not a falling channel: the first and last thirds sit at about the same level
+  const third = Math.max(3, Math.floor(R / 3));
+  const avgC = (a, b) => { let x = 0; for (let j = a; j <= b; j++) x += C[j]; return x / (b - a + 1); };
+  const drift = (avgC(end - third + 1, end) / avgC(start, start + third - 1) - 1) * 100;
+  if (drift < -cfg.depth * 0.35) return null;
+  // uptrend (stage 2): the 50-day rising and above the 200-day; range top near the 52-week high
+  const s50a = smaAt(C, end, 50), s50b = smaAt(C, end - 20, 50), s200 = smaAt(C, end, 200);
+  if (!(s50a > s50b)) return null;
+  if (!isNaN(s200) && !(s50a > s200)) return null;
+  if (avgC(end - 4, end) < s50a * 0.95) return null;                       // range sitting on / above the 50-day
   // the undercut: below the range low, but a shakeout rather than a breakdown
   const ucPct = (1 - L[u] / sup) * 100;
   if (ucPct < 0.3 || ucPct > cfg.uc) return null;
-  for (let j = u - 3; j < u; j++) if (C[j] < sup * (1 - cfg.uc / 100)) return null;
+  let inRangeBefore = false;
+  for (let j = u - 3; j < u; j++) { if (C[j] < sup * (1 - cfg.uc / 100)) return null; if (C[j] >= sup) inRangeBefore = true; }
+  if (!inRangeBefore) return null;                                          // must drop out of the range, not drift down
   // context: an advance into the range, near the highs
   let pre = Infinity; for (let j = Math.max(0, start - 60); j < start; j++) pre = Math.min(pre, L[j]);
   const runUp = (top / pre - 1) * 100;
   if (runUp < cfg.mom) return null;
   let hi52 = 0; for (let j = Math.max(0, k - 251); j <= k; j++) hi52 = Math.max(hi52, H[j]);
-  if (top < hi52 * 0.75) return null;
+  if (top < hi52 * 0.85) return null;
   // what happened after the undercut
   let r = -1;
   for (let j = u; j <= k; j++) if (C[j] > sup) { r = j; break; }
   for (let j = u + 1; j <= k; j++) if (L[j] < L[u]) return null;            // undercut low broken = failed
   const daysBelow = (r < 0 ? k : r) - u;
-  if (daysBelow > 6) return null;
+  if (daysBelow > 3) return null;                                           // a shakeout snaps back fast
+  const posK = H[k] > L[k] ? (C[k] - L[k]) / (H[k] - L[k]) : 0;
   let status;
   if (r < 0) {
-    if (k - u > 3) return null;                                             // too long under the range
+    // watch only when today already turns up from the undercut (green, closing in the upper half)
+    if (k - u > 2 || !(C[k] > c[k].open && posK >= 0.5)) return null;
     status = "watch";
-  } else if (r === k) status = "reclaim";
+  } else if (r === k) {
+    if (posK < 0.5) return null;                                            // weak reclaim
+    status = "reclaim";
+  }
   else if (close > top) status = "breakout";
   else if (close >= sup) status = "inrange";
   else return null;                                                         // fell back under the range
@@ -3674,7 +3692,7 @@ function vcpModeUI() {
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
   $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut";
   if (m === "undercut") {
-    $("vDesc").textContent = "Range undercut & rally (TraderLion): after an advance the stock moves sideways in a range, dips under the range low (a shakeout that runs the stops), then rallies back. Entry 1: close back above the range low, stop under the undercut low. Entry 2: above the range top, stop just under it. \u201CWatch\u201D = undercut now, not yet reclaimed.";
+    $("vDesc").textContent = "Range undercut & rally (TraderLion): a stock in an uptrend (rising 50-day above the 200-day) moves sideways in a flat range near its high, then dips under the range low for 1\u20133 days (a shakeout that runs the stops) and snaps back. Falling stocks making new lows are excluded. Entry 1: close back above the range low, stop under the undercut low. Entry 2: above the range top, stop just under it. \u201CWatch\u201D = undercut now, not yet reclaimed.";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
     return;
   }
