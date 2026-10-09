@@ -1,0 +1,48 @@
+name: Update market breadth
+
+# Fully automatic:
+#  - runs by itself when these files are uploaded (push)
+#  - every weekday 16:30 IST, an hour after the NSE close
+on:
+  push:
+    paths:
+      - ".github/workflows/breadth.yml"
+      - "**/*breadth*.py"
+  schedule:
+    - cron: "0 11 * * 1-5"      # 16:30 IST
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: breadth
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install yfinance pandas
+      - name: Compute breadth
+        run: |
+          # find the script wherever it was uploaded (any folder, any spacing of the name)
+          SCRIPT=$(git ls-files | grep -iE 'fetch[ _-]?breadth\.py$' | head -1)
+          if [ -z "$SCRIPT" ]; then echo "fetch_breadth.py not found in the repo"; exit 1; fi
+          echo "Using $SCRIPT"
+          mkdir -p scripts
+          if [ "$SCRIPT" != "scripts/fetch_breadth.py" ]; then cp "$SCRIPT" scripts/fetch_breadth.py; fi
+          python scripts/fetch_breadth.py
+      - name: Commit data/breadth.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/breadth.json
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Update breadth $(date -u +%Y-%m-%d)"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 10; done
