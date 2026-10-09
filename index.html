@@ -305,6 +305,7 @@
     <h2>Scanner</h2>
     <label class="vlab" for="vMode">Style</label>
     <select id="vMode" class="vsel">
+      <option value="undercut">Range undercut &amp; rally (shakeout under the range)</option>
       <option value="start">Manas Arora entry — strong start (purple ▲)</option>
       <option value="canslim">CAN SLIM (full: C·A·N·S·L·I·M)</option>
       <option value="base">Base patterns with a pivot (Cup / Flat / Double bottom)</option>
@@ -399,6 +400,16 @@
         <label>Price × 30-day volume ≥ ₹ <input type="number" id="fTurn" value="10" min="0"> Cr</label>
         <label>Min price ₹ <input type="number" id="fMinPrice" value="20" min="0"></label>
         <label><input type="checkbox" id="fNear" checked> Also show near misses (fail 1 rule)</label>
+      </div>
+      <div class="vgrid" id="setUc" hidden>
+        <label>Show <select id="uShow"><option value="all">All stages</option><option value="watch">Watch: undercut now (before entry)</option><option value="reclaim">Reclaimed the range low</option><option value="breakout">Broke out above the range</option></select></label>
+        <label>Range length <input type="number" id="uMinW" value="3" min="2" max="20"> to <input type="number" id="uMaxW" value="12" min="3" max="40"> weeks</label>
+        <label>Range no deeper than <input type="number" id="uDepth" value="20" min="4" max="40"> %</label>
+        <label>Undercut up to <input type="number" id="uUc" value="8" min="0.5" step="0.5"> % below the range low</label>
+        <label>Undercut within the last <input type="number" id="uLook" value="10" min="2" max="20"> days</label>
+        <label>Run-up into the range ≥ <input type="number" id="uMom" value="20" min="0" max="300"> %</label>
+        <label>Min 20-day turnover ₹ <input type="number" id="uTurn" value="5" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="uMinPrice" value="20" min="0"></label>
       </div>
       <div class="vgrid" id="setStart" hidden>
         <label>Show <select id="sWhen"><option value="ready" selected>Tomorrow’s watchlist (before the ▲) — run after 3:30 pm</option><option value="live">Live: forming now — run 9:30–10:30 am</option><option value="today">Entries today (after close)</option><option value="3">Entries in the last 3 days</option><option value="5">Entries in the last 5 days</option></select></label>
@@ -567,7 +578,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 44 · Market breadth dashboard</p>
+  <p class="small" style="text-align:center">Version 45 · Range undercut & rally scanner</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -635,8 +646,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=44"></script>
-<script src="app.js?v=44"></script>
+<script src="symbols.js?v=45"></script>
+<script src="app.js?v=45"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

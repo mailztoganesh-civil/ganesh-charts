@@ -657,6 +657,101 @@ function analyseManas(c, niftyMap, cfg) {
   };
 }
 
+/* ───────── Range undercut & rally (TraderLion "Ultimate Trading Guide") ─────────
+ * A stock goes sideways in a range after an advance, dips BELOW the range low (a shakeout that
+ * runs the stops), then rallies back inside. Two entries:
+ *  1. Reclaim: buy as it closes back above the range low; stop under the undercut low.
+ *  2. Breakout: buy as it clears the range top and holds; stop just under the range top.
+ * "Watch" lists stocks that have just undercut and not yet reclaimed, i.e. before the entry. */
+function ucSettings() {
+  return {
+    show: $("uShow").value,                                          // all | reclaim | watch | breakout
+    minR: clampInt($("uMinW").value, 2, 20, 3) * 5,
+    maxR: clampInt($("uMaxW").value, 3, 40, 12) * 5,
+    depth: clampInt($("uDepth").value, 4, 40, 20),
+    uc: Math.max(0.5, parseFloat($("uUc").value) || 8),
+    look: clampInt($("uLook").value, 2, 20, 10),
+    mom: clampInt($("uMom").value, 0, 300, 20),
+    turn: Math.max(0, parseFloat($("uTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("uMinPrice").value) || 0),
+  };
+}
+
+function analyseUndercut(c, cfg) {
+  const n = c.length;
+  if (n < 80) return null;
+  const H = c.map(x => x.high), L = c.map(x => x.low), C = c.map(x => x.close), V = c.map(x => x.volume);
+  const k = n - 1, close = C[k];
+  const v20 = smaAt(V, k - 1, 20) || 1;
+  const turn = close * smaAt(V, k, 20) / 1e7;
+  if (close < cfg.minPrice || turn < cfg.turn) return null;
+  // undercut bar = lowest low of the last `look` bars
+  let u = k;
+  for (let j = k - cfg.look + 1; j <= k; j++) if (L[j] < L[u]) u = j;
+  // range = the bars before the drop into the undercut (the last 3 bars before it can be the drop)
+  const end = u - 3;
+  if (end - cfg.minR < 60) return null;
+  // pick the longest window that is a real sideways range: within the depth limit, its low tested
+  // at least twice, and the low not at the very start (that would be the advance INTO the range)
+  const countTests = (a, b, sup) => { let t = 0, on = false; for (let j = a; j <= b; j++) { const x = L[j] <= sup * 1.025; if (x && !on) t++; on = x; } return t; };
+  let best = null, hi = -Infinity, lo = Infinity, loAt = -1;
+  for (let R = 1; R <= cfg.maxR && end - R + 1 > 0; R++) {
+    const j = end - R + 1;
+    hi = Math.max(hi, H[j]);
+    if (L[j] < lo) { lo = L[j]; loAt = j; }
+    if ((hi / lo - 1) * 100 > cfg.depth) break;
+    if (R < cfg.minR || loAt < j + Math.ceil(R * 0.2)) continue;
+    const t = countTests(j, end, lo);
+    if (t >= 2) best = { R, hi, lo, start: j, tests: t };
+  }
+  if (!best) return null;
+  const { R, hi: top, lo: sup, start, tests } = best;
+  // the undercut: below the range low, but a shakeout rather than a breakdown
+  const ucPct = (1 - L[u] / sup) * 100;
+  if (ucPct < 0.3 || ucPct > cfg.uc) return null;
+  for (let j = u - 3; j < u; j++) if (C[j] < sup * (1 - cfg.uc / 100)) return null;
+  // context: an advance into the range, near the highs
+  let pre = Infinity; for (let j = Math.max(0, start - 60); j < start; j++) pre = Math.min(pre, L[j]);
+  const runUp = (top / pre - 1) * 100;
+  if (runUp < cfg.mom) return null;
+  let hi52 = 0; for (let j = Math.max(0, k - 251); j <= k; j++) hi52 = Math.max(hi52, H[j]);
+  if (top < hi52 * 0.75) return null;
+  // what happened after the undercut
+  let r = -1;
+  for (let j = u; j <= k; j++) if (C[j] > sup) { r = j; break; }
+  for (let j = u + 1; j <= k; j++) if (L[j] < L[u]) return null;            // undercut low broken = failed
+  const daysBelow = (r < 0 ? k : r) - u;
+  if (daysBelow > 6) return null;
+  let status;
+  if (r < 0) {
+    if (k - u > 3) return null;                                             // too long under the range
+    status = "watch";
+  } else if (r === k) status = "reclaim";
+  else if (close > top) status = "breakout";
+  else if (close >= sup) status = "inrange";
+  else return null;                                                         // fell back under the range
+  if (cfg.show !== "all" && cfg.show !== status && !(cfg.show === "reclaim" && status === "inrange")) return null;
+  const s50 = smaAt(C, k, 50);
+  const rVol = r >= 0 ? V[r] / v20 : null;
+  const ext = (close / top - 1) * 100;
+  let entry, sl, label;
+  if (status === "watch") { entry = sup * 1.002; sl = L[u]; label = "Buy as it reclaims the range low"; }
+  else if (status === "reclaim") { entry = close; sl = L[u]; label = "Reclaimed the range low today"; }
+  else if (status === "inrange") { entry = top * 1.002; sl = L[u]; label = "Back in the range: next entry above the top"; }
+  else { entry = Math.max(close, top); sl = top * 0.985; label = ext > 6 ? "Broke out — extended, wait for a pullback" : "Broke out above the range"; }
+  const risk = (entry - sl) / entry * 100;
+  const tags = [{ watch: "Watch: undercut", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: ext > 6 ? "Breakout (extended)" : "Breakout" }[status],
+    `Undercut ${ucPct.toFixed(1)}%`, `${Math.round(R / 5)}w range, ${((top / sup - 1) * 100).toFixed(0)}% deep`, `${tests} tests of the low`,
+    ...(rVol !== null && rVol >= 1.3 ? [`Reclaim vol ${rVol.toFixed(1)}×`] : []), ...(close > s50 ? [] : ["Below 50-day"]), `Run-up ${runUp.toFixed(0)}%`];
+  return {
+    mode: "undercut", status, label, close, date: ymd(c[k].date), top, sup, ucLow: L[u], ucDate: ymd(c[u].date),
+    reclaimDate: r >= 0 ? ymd(c[r].date) : null, entry, sl, risk: Math.round(risk * 10) / 10,
+    ucPct: Math.round(ucPct * 10) / 10, weeks: Math.round(R / 5), depth: Math.round((top / sup - 1) * 1000) / 10, tests,
+    runUp: Math.round(runUp), rVol: rVol === null ? null : Math.round(rVol * 10) / 10, ext: Math.round(ext * 10) / 10,
+    dist: Math.round((entry - close) / entry * 1000) / 10, turn: Math.round(turn * 10) / 10, tags,
+  };
+}
+
 /* ───────── Manas Arora entry: "strong start" (from 33 of his marked entries, Jun–Oct 2026) ─────────
  * Every marked entry (purple ▲ under the candle) is the same day:
  *  • it opens at or just above the prior close and hardly trades below the open (open ≈ low),
@@ -2548,7 +2643,26 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "start") {
+  if (r.mode === "undercut") {
+    add("Status", r.label, r.status === "reclaim" || r.status === "breakout" ? "up" : "");
+    add(r.status === "watch" ? "Buy above" : r.status === "inrange" ? "Next entry above" : "Entry", `\u20B9${r.entry.toFixed(2)}`, "up");
+    add("Stop", `\u20B9${r.sl.toFixed(2)} (${r.status === "breakout" ? "under the range top" : "under the undercut low"})`);
+    add("Risk", `${r.risk.toFixed(1)}%`, r.risk > 8 ? "down" : "");
+    add("Range", `\u20B9${r.sup.toFixed(2)} \u2013 \u20B9${r.top.toFixed(2)} \u00B7 ${r.weeks} weeks, ${r.depth}% deep`);
+    add("Undercut", `${fmtD(r.ucDate)} \u00B7 low \u20B9${r.ucLow.toFixed(2)} (${r.ucPct}% under)`);
+    if (r.reclaimDate) add("Reclaimed", `${fmtD(r.reclaimDate)}${r.rVol !== null ? ` \u00B7 volume ${r.rVol}\u00D7` : ""}`, r.rVol >= 1.3 ? "up" : "");
+    add("Tests of the low", String(r.tests));
+    add("Run-up before", `${r.runUp}%`);
+    add("Turnover 20d", `\u20B9${r.turn} Cr`);
+    $("cwNote").textContent = r.status === "watch"
+      ? "It has dipped under the range low (stops run). Entry 1 comes only if it closes back above the range low; if it keeps falling or the undercut low breaks, skip."
+      : r.status === "breakout"
+      ? "Entry 2: through the range top. Best on a hold or small pullback to the top line, with the stop just under it. Skip if extended."
+      : "Entry 1: the shakeout failed and price is back in the range. Stop under the undercut low; add above the range top (entry 2).";
+    mark = { triDates: r.reclaimDate ? [r.reclaimDate] : [], triMain: r.reclaimDate, lines: [
+      { price: r.top, label: "Range top", color: "rgb(234,88,12)" }, { price: r.sup, label: "Range low", color: "rgb(120,123,134)" },
+      { price: r.sl, label: "Stop", color: "rgb(217,26,26)" }] };
+  } else if (r.mode === "start") {
     if (r.ready) {
       add("Watch score", `${r.score} / 100`, r.score >= 60 ? "up" : "");
       add("1. Open between", `\u20B9${r.openLo.toFixed(2)} \u2013 \u20B9${r.openHi.toFixed(2)}`);
@@ -3261,7 +3375,7 @@ async function runVcp() {
   if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
   const mode = $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
-  const cfg = mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -3305,7 +3419,7 @@ async function runVcp() {
       if (!c.length) noData++;
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
-      let r = c.length ? (mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      let r = c.length ? (mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
       if ((mode === "vcp" || mode === "flag") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
@@ -3338,7 +3452,10 @@ async function runVcp() {
   renderVcp();
 }
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
-const sortVcp = arr => [...arr].sort((a, b) => a.mode === "start"
+const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3 };
+const sortVcp = arr => [...arr].sort((a, b) => a.mode === "undercut"
+  ? (UC_ORDER[a.status] - UC_ORDER[b.status]) || ((a.ext > 6) - (b.ext > 6)) || (a.risk - b.risk)
+  : a.mode === "start"
   ? ((b.score || 0) - (a.score || 0)) || ((a.days ?? 0) - (b.days ?? 0)) || ((b.openLow ? 1 : 0) - (a.openLow ? 1 : 0)) || (a.risk - b.risk)
   : a.mode === "india"
   ? (b.ib - a.ib) || (a.risk - b.risk)
@@ -3353,7 +3470,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "start"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -3422,6 +3539,21 @@ function renderVcp() {
       row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
       row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
       if (r.day1) row.querySelector(".vdist").classList.add("up");
+      row.onclick = () => openChartWin(r.symbol, vcpSource());
+      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
+      box.appendChild(row);
+      continue;
+    }
+    if (r.mode === "undercut") {
+      row.classList.add("irow");
+      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+      row.querySelector("b").textContent = r.symbol;
+      const tg = row.querySelector(".itags");
+      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "reclaim" ? " ib" : r.status === "watch" ? " pd" : r.ext > 6 ? " miss" : "") : t.startsWith("Below") ? " miss" : ""); sp.textContent = t; tg.appendChild(sp); });
+      row.querySelector(".ilev").textContent = `${r.status === "watch" ? "Buy above" : r.status === "inrange" ? "Next: above" : "Entry"} \u20B9${r.entry.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 range \u20B9${r.sup.toFixed(1)}\u2013${r.top.toFixed(1)}`;
+      const dd = row.querySelector(".vdist");
+      dd.textContent = r.status === "breakout" ? `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% over top` : r.status === "reclaim" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to entry`;
+      if (r.status === "reclaim" || r.status === "breakout") dd.classList.add("up");
       row.onclick = () => openChartWin(r.symbol, vcpSource());
       row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
       box.appendChild(row);
@@ -3540,7 +3672,12 @@ $("vScan").onclick = runVcp;
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut";
+  if (m === "undercut") {
+    $("vDesc").textContent = "Range undercut & rally (TraderLion): after an advance the stock moves sideways in a range, dips under the range low (a shakeout that runs the stops), then rallies back. Entry 1: close back above the range low, stop under the undercut low. Entry 2: above the range top, stop just under it. \u201CWatch\u201D = undercut now, not yet reclaimed.";
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    return;
+  }
   if (m === "start") {
     $("vDesc").textContent = "Manas Arora\u2019s entry day, as marked on his charts: after a short quiet pause near the high in an uptrend (often at the 21 EMA), the stock opens near the prior close, barely dips below the open, then climbs and closes near the day\u2019s high, usually through the prior day\u2019s high. Repeated on the next day = add-on. Stop = that day\u2019s low. \u201CTomorrow\u2019s watchlist\u201D finds the quiet day BEFORE the \u25B2 (run after 3:30 pm IST); \u201CLive: forming now\u201D catches it during the session (run 9:30\u201310:30 am IST).";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
@@ -3598,7 +3735,9 @@ $("vPdf").onclick = () => {
   generate(syms);
 };
 function scanItem(r) {
-        const note = r.mode === "start"
+        const note = r.mode === "undercut"
+          ? `Undercut & rally (${r.status}): entry \u20B9${r.entry.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, range \u20B9${r.sup.toFixed(1)}-${r.top.toFixed(1)}`
+          : r.mode === "start"
           ? (r.ready ? `Manas watch ${r.score}: tomorrow open \u20B9${r.openLo.toFixed(1)}-${r.openHi.toFixed(1)}, buy above \u20B9${r.trigger.toFixed(2)}, stop day's low` : `Manas entry ${fmtD(r.entryDate)}: \u20B9${r.trigger.toFixed(2)}, stop LOD \u20B9${r.sl.toFixed(2)} (${r.risk}%)`)
           : r.mode === "canslim"
           ? `CAN SLIM: pivot \u20B9${r.pivot.toFixed(2)}, stop \u20B9${r.stop.toFixed(2)}${r.rsRank !== null ? `, RS ${r.rsRank}` : ""}, A/D ${r.ad}${r.fund && r.fund.q !== null ? `, EPS +${r.fund.q}%` : ""}`
@@ -3617,7 +3756,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "undercut" ? { entry: r.entry, sl: r.sl } : r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {
