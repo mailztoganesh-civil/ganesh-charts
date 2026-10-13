@@ -669,6 +669,7 @@ const TIGHT_RULES = {
   loose: "Last days not tight", far: "Not pressed near the breakout line", vol: "Volume not drying up in the tight area",
   weakbo: "Broke out, but on light volume", extended: "Already extended above the line",
 };
+const TIGHT_SHORT = { trend: "trend", strength: "move", nobase: "base depth", nottop: "off high", loose: "not tight", far: "far from line", vol: "volume" };
 function tightSettings() {
   return {
     show: $("tShow").value,
@@ -683,7 +684,7 @@ function tightSettings() {
     boVol: Math.max(0.5, parseFloat($("tBoVol").value) || 1.5),
     turn: Math.max(0, parseFloat($("tTurn").value) || 0),
     minPrice: Math.max(0, parseFloat($("tMinPrice").value) || 0),
-    nearMiss: $("tNear2").checked,
+    minScore: clampInt($("tScore").value, 30, 100, 75),
   };
 }
 function analyseTight(c, cfg) {
@@ -696,9 +697,10 @@ function analyseTight(c, cfg) {
   if (close < cfg.minPrice || turn < cfg.turn) return fail("liq");
   const e21 = emaSeries(C, 21);
   const s50 = smaAt(C, k, 50), s50p = smaAt(C, k - 15, 50);
-  // uptrend: rising 50-day, price above it, 21 EMA at/above the 50-day and not falling (it flattens in a tight area)
-  if (!(s50 > s50p && close >= s50 && e21[k] >= s50 * 0.99 && e21[k] >= e21[k - 5] * 0.995 && close >= e21[k] * 0.97)) return fail("trend");
-  // the breakout line: high of the base, not counting today (so a breakout today is measured against it)
+  // 0..1 scale: 1 when the value meets the rule, falling to 0 at `bad`
+  const part = (v, good, bad) => good === bad ? (v <= good ? 1 : 0) : Math.max(0, Math.min(1, (bad - v) / (bad - good)));
+  // breakout line = high of the base (not counting today). Longest window within the depth limit;
+  // if none, fall back to the last minR bars so the stock can still be scored
   const end = k - 1;
   let best = null, hi = -Infinity, lo = Infinity;
   for (let R = 1; R <= cfg.maxR && end - R + 1 > 0; R++) {
@@ -707,45 +709,54 @@ function analyseTight(c, cfg) {
     if ((hi / lo - 1) * 100 > cfg.depth) break;
     if (R >= cfg.minR) best = { R, line: hi, low: lo, start: j };
   }
-  if (!best) return fail("nobase");
+  if (!best) {
+    let h2 = -Infinity, l2 = Infinity; const j0 = end - cfg.minR + 1;
+    for (let j = j0; j <= end; j++) { h2 = Math.max(h2, H[j]); l2 = Math.min(l2, L[j]); }
+    best = { R: cfg.minR, line: h2, low: l2, start: j0 };
+  }
   const { R, line, low, start } = best;
+  const depth = (line / low - 1) * 100;
   let hi52 = 0; for (let j = Math.max(0, k - 251); j <= end; j++) hi52 = Math.max(hi52, H[j]);
-  if (line < hi52 * 0.95) return fail("nottop");
   let pre = Infinity; for (let j = Math.max(0, start - 120); j < start; j++) pre = Math.min(pre, L[j]);
   const runUp = (line / pre - 1) * 100;
-  if (runUp < cfg.mom) return fail("strength");
-  // the tight area: the last `days` bars before today (or including today if not breaking out)
   const v50 = smaAt(V, k - 1, 50) || 1;
   const breakout = close > line;
+  if (breakout && close > line * 1.05) return fail("extended");
   const tEnd = breakout ? k - 1 : k, tStart = tEnd - cfg.days + 1;
   let tHi = -Infinity, tLo = Infinity, tV = 0;
   for (let j = tStart; j <= tEnd; j++) { tHi = Math.max(tHi, H[j]); tLo = Math.min(tLo, L[j]); tV += V[j]; }
-  const tightPct = (tHi / tLo - 1) * 100, volRatio = tV / cfg.days / v50;
-  // the last checks are "soft": a stock failing one of them can still be listed as a near miss
-  const fails = [];
-  if (tightPct > cfg.tight) fails.push("loose");
-  if (tLo < line * (1 - cfg.near / 100)) fails.push("far");
-  if (volRatio > cfg.volDry) fails.push("vol");
-  const volToday = V[k] / v50;
-  let status;
-  if (breakout) {
-    if (close > line * 1.05) return fail("extended");
-    if (volToday < cfg.boVol) fails.push("weakbo");
-    status = "breakout";
-  } else status = "ready";
-  if (cfg.show !== "all" && cfg.show !== status) return fail(status === "ready" ? "loose" : "weakbo");
-  const near = fails.length ? TIGHT_RULES[fails[0]] : null;
+  const tightPct = (tHi / tLo - 1) * 100, volRatio = tV / cfg.days / v50, volToday = V[k] / v50;
+  const under = (1 - tLo / line) * 100;
+  // trend: rising 50-day, price above it, 21 EMA flat/up and above the 50-day
+  const trendOk = s50 > s50p && close >= s50 && e21[k] >= s50 * 0.99 && e21[k] >= e21[k - 5] * 0.995;
+  const trendPart = trendOk ? 1 : (s50 > s50p ? 0.5 : 0) * part((1 - close / s50) * 100, 0, 6);
+  const parts = {                                   // [score 0..1, weight]: the tight pivot counts most
+    trend: [trendPart, 15],
+    strength: [part(-runUp, -cfg.mom, 0), 10],
+    nobase: [part(depth, cfg.depth, cfg.depth * 2), 10],
+    nottop: [part((1 - line / hi52) * 100, 5, 20), 10],
+    loose: [part(tightPct, cfg.tight, cfg.tight * 2), 25],
+    far: [part(under, cfg.near, cfg.near * 2), 20],
+    vol: [part(volRatio, cfg.volDry, cfg.volDry * 2), 10],
+  };
+  let sc = 0, w = 0;
+  for (const [p, wt] of Object.values(parts)) { sc += p * wt; w += wt; }
+  const score = Math.round(sc / w * 100);
+  const weak = Object.entries(parts).filter(([, [p]]) => p < 0.999).sort((a, b) => a[1][0] * a[1][1] - b[1][0] * b[1][1] || b[1][1] - a[1][1]).map(([key]) => key);
+  if (score < cfg.minScore) return fail(weak[0] || "loose");
+  const status = breakout ? (volToday >= cfg.boVol ? "breakout" : "weakbo") : "ready";
+  if (cfg.show !== "all" && cfg.show !== (status === "weakbo" ? "breakout" : status)) return fail(weak[0] || "loose");
+  const near = weak.length ? weak.map(x => TIGHT_SHORT[x]).join(", ") : null;
   const trigger = status === "ready" ? Math.max(tHi, line) * 1.001 : close;
   const sl = tLo * 0.995;
   const risk = (trigger - sl) / trigger * 100;
-  const tags = [near ? `Near miss: ${near}` : status === "breakout" ? "Breakout today" : "Ready \u00B7 tight", `${cfg.days}-day range ${tightPct.toFixed(1)}%`,
-    `${((line / close - 1) * 100).toFixed(1)}% under the line`.replace("-", "+"), `Vol ${volRatio.toFixed(2)}× in the tight area`,
-    ...(status === "breakout" ? [`Breakout vol ${volToday.toFixed(1)}×`] : []), `${Math.round(R / 5)}w base, ${((line / low - 1) * 100).toFixed(1)}% deep`, `Run-up ${runUp.toFixed(0)}%`];
-  if (status === "breakout") tags[2] = `${((close / line - 1) * 100).toFixed(1)}% over the line`;
+  const tags = [`Match ${score}%`, status === "breakout" ? "Breakout today" : status === "weakbo" ? "Breakout, light volume" : "Ready",
+    `${cfg.days}-day range ${tightPct.toFixed(1)}%`, breakout ? `${((close / line - 1) * 100).toFixed(1)}% over the line` : `${under.toFixed(1)}% under the line`,
+    `Vol ${volRatio.toFixed(2)}×`, `${Math.round(R / 5)}w base, ${depth.toFixed(1)}% deep`, `Run-up ${runUp.toFixed(0)}%`, ...(near ? [`Weak: ${near}`] : [])];
   return {
-    fails, near, mode: "tight", status, close, date: ymd(c[k].date), line, baseLow: low, tHi, tLo, trigger, sl, risk: Math.round(risk * 10) / 10,
+    fails: [], near, score, mode: "tight", status, close, date: ymd(c[k].date), line, baseLow: low, tHi, tLo, trigger, sl, risk: Math.round(risk * 10) / 10,
     tightPct: Math.round(tightPct * 10) / 10, volRatio: Math.round(volRatio * 100) / 100, volToday: Math.round(volToday * 10) / 10,
-    weeks: Math.round(R / 5), depth: Math.round((line / low - 1) * 1000) / 10, runUp: Math.round(runUp), e21: e21[k], s50,
+    weeks: Math.round(R / 5), depth: Math.round(depth * 10) / 10, runUp: Math.round(runUp), e21: e21[k], s50,
     dist: Math.round((trigger - close) / trigger * 1000) / 10, turn: Math.round(turn * 10) / 10, tags,
   };
 }
@@ -2797,7 +2808,7 @@ async function showVcpAt(sym, n, force) {
   };
   let mark;
   if (r.mode === "tight") {
-    if (r.near) add("Near miss", r.near, "down");
+    add("Match", `${r.score}%${r.near ? ` \u00B7 weak: ${r.near}` : " \u00B7 all rules met"}`, r.score >= 90 ? "up" : r.score < 75 ? "down" : "");
     add("Stage", r.status === "breakout" ? "4 \u00B7 Volume breakout today" : "3 \u00B7 Tight under the line (anticipation)", "up");
     add(r.status === "ready" ? "Buy above" : "Entry", `\u20B9${r.trigger.toFixed(2)}`, "up");
     add("Stop", `\u20B9${r.sl.toFixed(2)} (under the tight area)`);
@@ -3625,7 +3636,7 @@ async function runVcp() {
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
 const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3, base: 4 };
 const sortVcp = arr => [...arr].sort((a, b) => a.mode === "tight"
-  ? ((a.near ? 1 : 0) - (b.near ? 1 : 0)) || ((a.status === "breakout" ? 0 : 1) - (b.status === "breakout" ? 0 : 1)) || (a.tightPct - b.tightPct)
+  ? (b.score - a.score) || ((a.status === "breakout" ? 0 : 1) - (b.status === "breakout" ? 0 : 1)) || (a.tightPct - b.tightPct)
   : a.mode === "undercut"
   ? (UC_ORDER[a.status] - UC_ORDER[b.status]) || ((a.ext > 6) - (b.ext > 6)) || (a.risk - b.risk)
   : a.mode === "start"
@@ -3722,7 +3733,7 @@ function renderVcp() {
       row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
       row.querySelector("b").textContent = r.symbol;
       const tg = row.querySelector(".itags");
-      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.near ? " miss" : r.status === "breakout" ? " ib" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
+      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.score >= 90 ? " ib" : r.score >= 80 ? " pd" : "") : t.startsWith("Weak") ? " miss" : i === 1 && r.status === "breakout" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
       row.querySelector(".ilev").textContent = `${r.status === "ready" ? "Buy above" : "Entry"} \u20B9${r.trigger.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 line \u20B9${r.line.toFixed(2)}`;
       const dd = row.querySelector(".vdist");
       dd.textContent = r.status === "breakout" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to trigger`;
@@ -3931,7 +3942,7 @@ $("vPdf").onclick = () => {
 };
 function scanItem(r) {
         const note = r.mode === "tight"
-          ? `${r.status === "breakout" ? "Volume breakout" : "Tight near highs"}: ${r.status === "ready" ? "buy above" : "entry"} \u20B9${r.trigger.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, line \u20B9${r.line.toFixed(2)}, ${r.days || ""}tight ${r.tightPct}%`
+          ? `Match ${r.score}% \u00B7 ${r.status === "breakout" ? "Volume breakout" : "Tight near highs"}: ${r.status === "ready" ? "buy above" : "entry"} \u20B9${r.trigger.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, line \u20B9${r.line.toFixed(2)}, ${r.days || ""}tight ${r.tightPct}%`
           : r.mode === "undercut"
           ? `${({ base: "Base at top (no undercut yet)", watch: "Undercut, turning up", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: "Breakout" })[r.status]}: ${r.status === "base" ? "watch low" : "entry"} \u20B9${r.entry.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, range \u20B9${r.sup.toFixed(1)}-${r.top.toFixed(1)}${r.ucPct ? `, undercut ${r.ucPct}%` : ""}`
           : r.mode === "start"
