@@ -657,6 +657,94 @@ function analyseManas(c, niftyMap, cfg) {
   };
 }
 
+/* ───────── Tight near the highs — anticipation breakout ("Big move → quiet base → tight pivot → volume breakout")
+ * 1. Strength first: a big advance (default 50%+) into the base.
+ * 2. Quiet base: a shallow sideways base at the 52-week high, above a rising 21 EMA and 50-day.
+ * 3. Tight pivot: the last few days are tiny, pressed just under the breakout line, on drying volume
+ *    -> "Ready": buy above the tight-area high (anticipation) or the line; stop under the tight-area low.
+ * 4. Volume confirms: today closes above the line on heavy volume -> "Breakout today". */
+const TIGHT_RULES = {
+  data: "Not enough history", liq: "Price / liquidity too low", trend: "Not above a rising 21 EMA / 50-day",
+  nobase: "No shallow base (too deep or too short)", nottop: "Base not at the 52-week high", strength: "No big move into the base",
+  loose: "Last days not tight", far: "Not pressed near the breakout line", vol: "Volume not drying up in the tight area",
+  weakbo: "Broke out, but on light volume", extended: "Already extended above the line",
+};
+function tightSettings() {
+  return {
+    show: $("tShow").value,
+    mom: clampInt($("tMom").value, 0, 500, 50),
+    minR: clampInt($("tMinW").value, 1, 20, 3) * 5,
+    maxR: clampInt($("tMaxW").value, 2, 40, 12) * 5,
+    depth: clampInt($("tDepth").value, 4, 40, 15),
+    days: clampInt($("tDays").value, 2, 15, 5),
+    tight: Math.max(0.5, parseFloat($("tTight").value) || 4),
+    near: Math.max(0.5, parseFloat($("tNear").value) || 5),
+    volDry: Math.max(0.1, parseFloat($("tVolDry").value) || 0.9),
+    boVol: Math.max(0.5, parseFloat($("tBoVol").value) || 1.5),
+    turn: Math.max(0, parseFloat($("tTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("tMinPrice").value) || 0),
+  };
+}
+function analyseTight(c, cfg) {
+  const fail = f => ({ fails: [f] });
+  const n = c.length;
+  if (n < 120) return fail("data");
+  const H = c.map(x => x.high), L = c.map(x => x.low), C = c.map(x => x.close), V = c.map(x => x.volume);
+  const k = n - 1, close = C[k];
+  const turn = close * smaAt(V, k, 20) / 1e7;
+  if (close < cfg.minPrice || turn < cfg.turn) return fail("liq");
+  const e21 = emaSeries(C, 21);
+  const s50 = smaAt(C, k, 50), s50p = smaAt(C, k - 15, 50);
+  if (!(e21[k] > e21[k - 5] && s50 > s50p && e21[k] > s50 && close >= e21[k] * 0.98)) return fail("trend");
+  // the breakout line: high of the base, not counting today (so a breakout today is measured against it)
+  const end = k - 1;
+  let best = null, hi = -Infinity, lo = Infinity;
+  for (let R = 1; R <= cfg.maxR && end - R + 1 > 0; R++) {
+    const j = end - R + 1;
+    hi = Math.max(hi, H[j]); lo = Math.min(lo, L[j]);
+    if ((hi / lo - 1) * 100 > cfg.depth) break;
+    if (R >= cfg.minR) best = { R, line: hi, low: lo, start: j };
+  }
+  if (!best) return fail("nobase");
+  const { R, line, low, start } = best;
+  let hi52 = 0; for (let j = Math.max(0, k - 251); j <= end; j++) hi52 = Math.max(hi52, H[j]);
+  if (line < hi52 * 0.95) return fail("nottop");
+  let pre = Infinity; for (let j = Math.max(0, start - 120); j < start; j++) pre = Math.min(pre, L[j]);
+  const runUp = (line / pre - 1) * 100;
+  if (runUp < cfg.mom) return fail("strength");
+  // the tight area: the last `days` bars before today (or including today if not breaking out)
+  const v50 = smaAt(V, k - 1, 50) || 1;
+  const breakout = close > line;
+  const tEnd = breakout ? k - 1 : k, tStart = tEnd - cfg.days + 1;
+  let tHi = -Infinity, tLo = Infinity, tV = 0;
+  for (let j = tStart; j <= tEnd; j++) { tHi = Math.max(tHi, H[j]); tLo = Math.min(tLo, L[j]); tV += V[j]; }
+  const tightPct = (tHi / tLo - 1) * 100, volRatio = tV / cfg.days / v50;
+  if (tightPct > cfg.tight) return fail("loose");
+  if (tLo < line * (1 - cfg.near / 100)) return fail("far");
+  if (volRatio > cfg.volDry) return fail("vol");
+  const volToday = V[k] / v50;
+  let status;
+  if (breakout) {
+    if (close > line * 1.05) return fail("extended");
+    if (volToday < cfg.boVol) return fail("weakbo");
+    status = "breakout";
+  } else status = "ready";
+  if (cfg.show !== "all" && cfg.show !== status) return fail(status === "ready" ? "loose" : "weakbo");
+  const trigger = status === "ready" ? Math.max(tHi, line) * 1.001 : close;
+  const sl = tLo * 0.995;
+  const risk = (trigger - sl) / trigger * 100;
+  const tags = [status === "breakout" ? "Breakout today" : "Ready · tight", `${cfg.days}-day range ${tightPct.toFixed(1)}%`,
+    `${((line / close - 1) * 100).toFixed(1)}% under the line`.replace("-", "+"), `Vol ${volRatio.toFixed(2)}× in the tight area`,
+    ...(status === "breakout" ? [`Breakout vol ${volToday.toFixed(1)}×`] : []), `${Math.round(R / 5)}w base, ${((line / low - 1) * 100).toFixed(1)}% deep`, `Run-up ${runUp.toFixed(0)}%`];
+  if (status === "breakout") tags[2] = `${((close / line - 1) * 100).toFixed(1)}% over the line`;
+  return {
+    fails: [], mode: "tight", status, close, date: ymd(c[k].date), line, baseLow: low, tHi, tLo, trigger, sl, risk: Math.round(risk * 10) / 10,
+    tightPct: Math.round(tightPct * 10) / 10, volRatio: Math.round(volRatio * 100) / 100, volToday: Math.round(volToday * 10) / 10,
+    weeks: Math.round(R / 5), depth: Math.round((line / low - 1) * 1000) / 10, runUp: Math.round(runUp), e21: e21[k], s50,
+    dist: Math.round((trigger - close) / trigger * 1000) / 10, turn: Math.round(turn * 10) / 10, tags,
+  };
+}
+
 /* ───────── Range undercut & rally (TraderLion "Ultimate Trading Guide") ─────────
  * A stock goes sideways in a range after an advance, dips BELOW the range low (a shakeout that
  * runs the stops), then rallies back inside. Two entries:
@@ -2703,7 +2791,22 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "undercut") {
+  if (r.mode === "tight") {
+    add("Stage", r.status === "breakout" ? "4 \u00B7 Volume breakout today" : "3 \u00B7 Tight under the line (anticipation)", "up");
+    add(r.status === "ready" ? "Buy above" : "Entry", `\u20B9${r.trigger.toFixed(2)}`, "up");
+    add("Stop", `\u20B9${r.sl.toFixed(2)} (under the tight area)`);
+    add("Risk", `${r.risk.toFixed(1)}%`, r.risk > 6 ? "down" : "");
+    add("Breakout line", `\u20B9${r.line.toFixed(2)}`);
+    add("Tight area", `\u20B9${r.tLo.toFixed(2)} \u2013 \u20B9${r.tHi.toFixed(2)} (${r.tightPct}%)`);
+    add("Volume", `${r.volRatio}\u00D7 avg in the tight days${r.status === "breakout" ? ` \u00B7 today ${r.volToday}\u00D7` : ""}`, r.status === "breakout" ? "up" : "");
+    add("Base", `${r.weeks} weeks, ${r.depth}% deep`);
+    add("Big move before", `+${r.runUp}%`);
+    add("21 EMA / 50-day", `\u20B9${r.e21.toFixed(2)} / \u20B9${r.s50.toFixed(2)}`);
+    $("cwNote").textContent = r.status === "ready"
+      ? "Strength first, tightness next: tiny candles pressed under the breakout line on drying volume. Anticipation entry above the tight-area high, stop under its low. Volume should expand when it goes."
+      : "Volume confirms: closed above the breakout line on heavy volume today. Avoid chasing more than ~5% above the line; stop under the tight area.";
+    mark = { lines: [{ price: r.line, label: "Breakout line", color: "rgb(26,77,179)" }, { price: r.trigger, label: "Buy above", color: "rgb(18,140,51)" }, { price: r.sl, label: "Stop", color: "rgb(217,26,26)" }] };
+  } else if (r.mode === "undercut") {
     add("Status", r.label, r.status === "reclaim" || r.status === "breakout" ? "up" : "");
     add(r.status === "watch" ? "Buy above" : r.status === "inrange" ? "Next entry above" : "Entry", `\u20B9${r.entry.toFixed(2)}`, "up");
     add("Stop", `\u20B9${r.sl.toFixed(2)} (${r.status === "breakout" ? "under the range top" : "under the undercut low"})`);
@@ -3437,7 +3540,7 @@ async function runVcp() {
   if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
   const mode = $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
-  const cfg = mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -3481,8 +3584,8 @@ async function runVcp() {
       if (!c.length) noData++;
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
-      let r = c.length ? (mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
-      if ((mode === "vcp" || mode === "flag" || mode === "undercut") && r) {
+      let r = c.length ? (mode === "tight" ? analyseTight(c, cfg) : mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      if ((mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
       }
@@ -3497,8 +3600,8 @@ async function runVcp() {
   try { wakeLock?.release(); } catch {}
   vcpBusy = false;
   $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${(mode === "vcp" || mode === "base" || mode === "canslim") && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
-  if (mode === "vcp" || mode === "flag" || mode === "undercut") {
-    const RULES = mode === "flag" ? FLAG_RULES : mode === "undercut" ? UC_RULES : VCP_RULES;
+  if (mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight") {
+    const RULES = mode === "flag" ? FLAG_RULES : mode === "undercut" ? UC_RULES : mode === "tight" ? TIGHT_RULES : VCP_RULES;
     const items = Object.entries(tally).filter(([k]) => k !== "ok").sort((a, b) => b[1] - a[1]);
     $("vWhy").hidden = !items.length;
     $("vWhyList").innerHTML = "";
@@ -3515,7 +3618,9 @@ async function runVcp() {
 }
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
 const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3, base: 4 };
-const sortVcp = arr => [...arr].sort((a, b) => a.mode === "undercut"
+const sortVcp = arr => [...arr].sort((a, b) => a.mode === "tight"
+  ? ((a.status === "breakout" ? 0 : 1) - (b.status === "breakout" ? 0 : 1)) || (a.tightPct - b.tightPct)
+  : a.mode === "undercut"
   ? (UC_ORDER[a.status] - UC_ORDER[b.status]) || ((a.ext > 6) - (b.ext > 6)) || (a.risk - b.risk)
   : a.mode === "start"
   ? ((b.score || 0) - (a.score || 0)) || ((a.days ?? 0) - (b.days ?? 0)) || ((b.openLow ? 1 : 0) - (a.openLow ? 1 : 0)) || (a.risk - b.risk)
@@ -3532,7 +3637,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "undercut"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "tight" ? "Tight near highs" : vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -3601,6 +3706,21 @@ function renderVcp() {
       row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
       row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
       if (r.day1) row.querySelector(".vdist").classList.add("up");
+      row.onclick = () => openChartWin(r.symbol, vcpSource());
+      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
+      box.appendChild(row);
+      continue;
+    }
+    if (r.mode === "tight") {
+      row.classList.add("irow");
+      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+      row.querySelector("b").textContent = r.symbol;
+      const tg = row.querySelector(".itags");
+      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "breakout" ? " ib" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
+      row.querySelector(".ilev").textContent = `${r.status === "ready" ? "Buy above" : "Entry"} \u20B9${r.trigger.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 line \u20B9${r.line.toFixed(2)}`;
+      const dd = row.querySelector(".vdist");
+      dd.textContent = r.status === "breakout" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to trigger`;
+      if (r.status === "breakout") dd.classList.add("up");
       row.onclick = () => openChartWin(r.symbol, vcpSource());
       row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
       box.appendChild(row);
@@ -3734,7 +3854,12 @@ $("vScan").onclick = runVcp;
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut"; $("setTight").hidden = m !== "tight";
+  if (m === "tight") {
+    $("vDesc").textContent = "Strength first, tightness next, volume confirms: a big move (50%+), a shallow base at the 52-week high above a rising 21 EMA / 50-day, then the last few candles tiny and pressed under the breakout line on drying volume (Ready \u2014 anticipation entry), or today closing above the line on heavy volume (Breakout).";
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    return;
+  }
   if (m === "undercut") {
     $("vDesc").textContent = "Range undercut & rally (TraderLion): a stock in an uptrend (rising 50-day above the 200-day) builds a flat base AT THE TOP (range high = 52-week high, right after the advance), then dips under the range low for 1\u20133 days (a shakeout that runs the stops) and snaps back. Falling stocks making new lows are excluded. Entry 1: close back above the range low, stop under the undercut low. Entry 2: above the range top, stop just under it. \u201CWatch\u201D = undercut now, not yet reclaimed.";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
@@ -3799,7 +3924,9 @@ $("vPdf").onclick = () => {
   generate(syms, { notes });
 };
 function scanItem(r) {
-        const note = r.mode === "undercut"
+        const note = r.mode === "tight"
+          ? `${r.status === "breakout" ? "Volume breakout" : "Tight near highs"}: ${r.status === "ready" ? "buy above" : "entry"} \u20B9${r.trigger.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, line \u20B9${r.line.toFixed(2)}, ${r.days || ""}tight ${r.tightPct}%`
+          : r.mode === "undercut"
           ? `${({ base: "Base at top (no undercut yet)", watch: "Undercut, turning up", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: "Breakout" })[r.status]}: ${r.status === "base" ? "watch low" : "entry"} \u20B9${r.entry.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, range \u20B9${r.sup.toFixed(1)}-${r.top.toFixed(1)}${r.ucPct ? `, undercut ${r.ucPct}%` : ""}`
           : r.mode === "start"
           ? (r.ready ? `Manas watch ${r.score}: tomorrow open \u20B9${r.openLo.toFixed(1)}-${r.openHi.toFixed(1)}, buy above \u20B9${r.trigger.toFixed(2)}, stop day's low` : `Manas entry ${fmtD(r.entryDate)}: \u20B9${r.trigger.toFixed(2)}, stop LOD \u20B9${r.sl.toFixed(2)} (${r.risk}%)`)
@@ -3820,7 +3947,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "undercut" ? { entry: r.entry, sl: r.sl } : r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "tight" ? { entry: r.trigger, sl: r.sl } : r.mode === "undercut" ? { entry: r.entry, sl: r.sl } : r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {
