@@ -664,7 +664,7 @@ function analyseManas(c, niftyMap, cfg) {
  *    -> "Ready": buy above the tight-area high (anticipation) or the line; stop under the tight-area low.
  * 4. Volume confirms: today closes above the line on heavy volume -> "Breakout today". */
 const TIGHT_RULES = {
-  data: "Not enough history", liq: "Price / liquidity too low", trend: "Not above a rising 21 EMA / 50-day",
+  data: "Not enough history", liq: "Price / liquidity too low", trend: "Not in an uptrend (below a rising 50-day, or 21 EMA falling)",
   nobase: "No shallow base (too deep or too short)", nottop: "Base not at the 52-week high", strength: "No big move into the base",
   loose: "Last days not tight", far: "Not pressed near the breakout line", vol: "Volume not drying up in the tight area",
   weakbo: "Broke out, but on light volume", extended: "Already extended above the line",
@@ -695,7 +695,8 @@ function analyseTight(c, cfg) {
   if (close < cfg.minPrice || turn < cfg.turn) return fail("liq");
   const e21 = emaSeries(C, 21);
   const s50 = smaAt(C, k, 50), s50p = smaAt(C, k - 15, 50);
-  if (!(e21[k] > e21[k - 5] && s50 > s50p && e21[k] > s50 && close >= e21[k] * 0.98)) return fail("trend");
+  // uptrend: rising 50-day, price above it, 21 EMA at/above the 50-day and not falling (it flattens in a tight area)
+  if (!(s50 > s50p && close >= s50 && e21[k] >= s50 * 0.99 && e21[k] >= e21[k - 5] * 0.995 && close >= e21[k] * 0.97)) return fail("trend");
   // the breakout line: high of the base, not counting today (so a breakout today is measured against it)
   const end = k - 1;
   let best = null, hi = -Infinity, lo = Infinity;

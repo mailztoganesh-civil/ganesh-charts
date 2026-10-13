@@ -404,9 +404,9 @@
       </div>
       <div class="vgrid" id="setTight" hidden>
         <label>Show <select id="tShow"><option value="all">Ready (tight) + breakouts today</option><option value="ready">Ready: tight under the line (before the breakout)</option><option value="breakout">Breakout today on volume</option></select></label>
-        <label>Big move before the base ≥ <input type="number" id="tMom" value="50" min="0" max="500"> %</label>
+        <label>Big move before the base ≥ <input type="number" id="tMom" value="40" min="0" max="500"> %</label>
         <label>Base length <input type="number" id="tMinW" value="3" min="1" max="20"> to <input type="number" id="tMaxW" value="12" min="2" max="40"> weeks</label>
-        <label>Base no deeper than <input type="number" id="tDepth" value="15" min="4" max="40"> %</label>
+        <label>Base no deeper than <input type="number" id="tDepth" value="20" min="4" max="40"> %</label>
         <label>Tight area: last <input type="number" id="tDays" value="5" min="2" max="15"> days within <input type="number" id="tTight" value="4" min="0.5" step="0.5"> %</label>
         <label>Tight area within <input type="number" id="tNear" value="5" min="0.5" step="0.5"> % of the breakout line</label>
         <label>Tight-area volume ≤ <input type="number" id="tVolDry" value="0.9" min="0.1" step="0.1">× 50-day avg</label>
@@ -592,7 +592,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 53 · Tight near the highs scanner</p>
+  <p class="small" style="text-align:center">Version 54 · Tight near highs: flat 21 EMA ok</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -660,8 +660,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=53"></script>
-<script src="app.js?v=53"></script>
+<script src="symbols.js?v=54"></script>
+<script src="app.js?v=54"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
