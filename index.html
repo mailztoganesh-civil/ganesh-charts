@@ -413,6 +413,7 @@
         <label>Breakout volume ≥ <input type="number" id="tBoVol" value="1.5" min="0.5" step="0.1">× 50-day avg</label>
         <label>Min 20-day turnover ₹ <input type="number" id="tTurn" value="5" min="0"> Cr</label>
         <label>Min price ₹ <input type="number" id="tMinPrice" value="20" min="0"></label>
+        <label><input type="checkbox" id="tNear2" checked> Also show near misses (fail 1 tightness / volume rule)</label>
       </div>
       <div class="vgrid" id="setUc" hidden>
         <label>Show <select id="uShow"><option value="undercut" selected>Undercut &amp; rally (all stages, like the video)</option><option value="watch">Undercut now, turning up (before entry 1)</option><option value="reclaim">Reclaimed the range low</option><option value="breakout">Broke out above the range</option><option value="base">Bases at the top, no undercut yet (setting up)</option><option value="all">Everything</option></select></label>
@@ -592,7 +593,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 54 · Tight near highs: flat 21 EMA ok</p>
+  <p class="small" style="text-align:center">Version 55 · Tight near highs: near misses</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -660,8 +661,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=54"></script>
-<script src="app.js?v=54"></script>
+<script src="symbols.js?v=55"></script>
+<script src="app.js?v=55"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

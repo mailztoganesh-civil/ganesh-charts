@@ -683,6 +683,7 @@ function tightSettings() {
     boVol: Math.max(0.5, parseFloat($("tBoVol").value) || 1.5),
     turn: Math.max(0, parseFloat($("tTurn").value) || 0),
     minPrice: Math.max(0, parseFloat($("tMinPrice").value) || 0),
+    nearMiss: $("tNear2").checked,
   };
 }
 function analyseTight(c, cfg) {
@@ -720,26 +721,29 @@ function analyseTight(c, cfg) {
   let tHi = -Infinity, tLo = Infinity, tV = 0;
   for (let j = tStart; j <= tEnd; j++) { tHi = Math.max(tHi, H[j]); tLo = Math.min(tLo, L[j]); tV += V[j]; }
   const tightPct = (tHi / tLo - 1) * 100, volRatio = tV / cfg.days / v50;
-  if (tightPct > cfg.tight) return fail("loose");
-  if (tLo < line * (1 - cfg.near / 100)) return fail("far");
-  if (volRatio > cfg.volDry) return fail("vol");
+  // the last checks are "soft": a stock failing one of them can still be listed as a near miss
+  const fails = [];
+  if (tightPct > cfg.tight) fails.push("loose");
+  if (tLo < line * (1 - cfg.near / 100)) fails.push("far");
+  if (volRatio > cfg.volDry) fails.push("vol");
   const volToday = V[k] / v50;
   let status;
   if (breakout) {
     if (close > line * 1.05) return fail("extended");
-    if (volToday < cfg.boVol) return fail("weakbo");
+    if (volToday < cfg.boVol) fails.push("weakbo");
     status = "breakout";
   } else status = "ready";
   if (cfg.show !== "all" && cfg.show !== status) return fail(status === "ready" ? "loose" : "weakbo");
+  const near = fails.length ? TIGHT_RULES[fails[0]] : null;
   const trigger = status === "ready" ? Math.max(tHi, line) * 1.001 : close;
   const sl = tLo * 0.995;
   const risk = (trigger - sl) / trigger * 100;
-  const tags = [status === "breakout" ? "Breakout today" : "Ready · tight", `${cfg.days}-day range ${tightPct.toFixed(1)}%`,
+  const tags = [near ? `Near miss: ${near}` : status === "breakout" ? "Breakout today" : "Ready \u00B7 tight", `${cfg.days}-day range ${tightPct.toFixed(1)}%`,
     `${((line / close - 1) * 100).toFixed(1)}% under the line`.replace("-", "+"), `Vol ${volRatio.toFixed(2)}× in the tight area`,
     ...(status === "breakout" ? [`Breakout vol ${volToday.toFixed(1)}×`] : []), `${Math.round(R / 5)}w base, ${((line / low - 1) * 100).toFixed(1)}% deep`, `Run-up ${runUp.toFixed(0)}%`];
   if (status === "breakout") tags[2] = `${((close / line - 1) * 100).toFixed(1)}% over the line`;
   return {
-    fails: [], mode: "tight", status, close, date: ymd(c[k].date), line, baseLow: low, tHi, tLo, trigger, sl, risk: Math.round(risk * 10) / 10,
+    fails, near, mode: "tight", status, close, date: ymd(c[k].date), line, baseLow: low, tHi, tLo, trigger, sl, risk: Math.round(risk * 10) / 10,
     tightPct: Math.round(tightPct * 10) / 10, volRatio: Math.round(volRatio * 100) / 100, volToday: Math.round(volToday * 10) / 10,
     weeks: Math.round(R / 5), depth: Math.round((line / low - 1) * 1000) / 10, runUp: Math.round(runUp), e21: e21[k], s50,
     dist: Math.round((trigger - close) / trigger * 1000) / 10, turn: Math.round(turn * 10) / 10, tags,
@@ -2793,6 +2797,7 @@ async function showVcpAt(sym, n, force) {
   };
   let mark;
   if (r.mode === "tight") {
+    if (r.near) add("Near miss", r.near, "down");
     add("Stage", r.status === "breakout" ? "4 \u00B7 Volume breakout today" : "3 \u00B7 Tight under the line (anticipation)", "up");
     add(r.status === "ready" ? "Buy above" : "Entry", `\u20B9${r.trigger.toFixed(2)}`, "up");
     add("Stop", `\u20B9${r.sl.toFixed(2)} (under the tight area)`);
@@ -3620,7 +3625,7 @@ async function runVcp() {
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
 const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3, base: 4 };
 const sortVcp = arr => [...arr].sort((a, b) => a.mode === "tight"
-  ? ((a.status === "breakout" ? 0 : 1) - (b.status === "breakout" ? 0 : 1)) || (a.tightPct - b.tightPct)
+  ? ((a.near ? 1 : 0) - (b.near ? 1 : 0)) || ((a.status === "breakout" ? 0 : 1) - (b.status === "breakout" ? 0 : 1)) || (a.tightPct - b.tightPct)
   : a.mode === "undercut"
   ? (UC_ORDER[a.status] - UC_ORDER[b.status]) || ((a.ext > 6) - (b.ext > 6)) || (a.risk - b.risk)
   : a.mode === "start"
@@ -3717,7 +3722,7 @@ function renderVcp() {
       row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
       row.querySelector("b").textContent = r.symbol;
       const tg = row.querySelector(".itags");
-      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "breakout" ? " ib" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
+      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.near ? " miss" : r.status === "breakout" ? " ib" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
       row.querySelector(".ilev").textContent = `${r.status === "ready" ? "Buy above" : "Entry"} \u20B9${r.trigger.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 line \u20B9${r.line.toFixed(2)}`;
       const dd = row.querySelector(".vdist");
       dd.textContent = r.status === "breakout" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to trigger`;
