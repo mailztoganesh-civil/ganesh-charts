@@ -657,6 +657,117 @@ function analyseManas(c, niftyMap, cfg) {
   };
 }
 
+/* ───────── Draw a pattern (like Chartink's pattern search) ─────────
+ * Draw a price shape with your finger; each stock's last N closes are scaled to the same box and
+ * compared with the drawing. Match % = half shape correlation, half closeness of the two lines. */
+const DRAW_KEY = "gc:draw";
+let DRAW = [];                                            // [[x 0..1, y 0..1 (1 = top)]]
+try { DRAW = JSON.parse(localStorage.getItem(DRAW_KEY) || "[]"); } catch { DRAW = []; }
+const DRAW_PRESETS = {
+  flat: [0.15, 0.45, 0.7, 0.62, 0.72, 0.63, 0.71, 0.64, 0.7, 0.66, 0.71, 0.95],
+  cup: [0.92, 0.72, 0.45, 0.28, 0.22, 0.3, 0.48, 0.72, 0.9, 0.8, 0.83, 0.97],
+  dbl: [0.92, 0.55, 0.2, 0.55, 0.72, 0.5, 0.22, 0.52, 0.78, 0.97],
+  vcp: [0.25, 0.95, 0.55, 0.9, 0.68, 0.88, 0.77, 0.86, 0.81, 0.85, 0.97],
+  undercut: [0.15, 0.9, 0.68, 0.88, 0.68, 0.87, 0.7, 0.86, 0.5, 0.83, 0.88, 0.98],
+  pullback: [0.05, 0.25, 0.48, 0.72, 0.95, 0.82, 0.72, 0.76, 0.88],
+  tight: [0.1, 0.35, 0.65, 0.9, 0.78, 0.84, 0.86, 0.85, 0.87, 0.86, 0.87],
+};
+function resampleDraw(pts, n) {
+  const p = [...pts].sort((a, b) => a[0] - b[0]);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const x = n === 1 ? 0 : i / (n - 1);
+    if (x <= p[0][0]) { out.push(p[0][1]); continue; }
+    if (x >= p[p.length - 1][0]) { out.push(p[p.length - 1][1]); continue; }
+    let j = 1; while (j < p.length && p[j][0] < x) j++;
+    const a = p[j - 1], b = p[j], t = b[0] === a[0] ? 0 : (x - a[0]) / (b[0] - a[0]);
+    out.push(a[1] + (b[1] - a[1]) * t);
+  }
+  return out;
+}
+function drawPad() {
+  const cv = $("dCanvas"); if (!cv || $("drawBox").hidden) return;
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth || 600, H = cv.clientHeight || 180;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "#EEF0F4"; ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, H * i / 4); ctx.lineTo(W, H * i / 4); ctx.stroke(); }
+  for (let i = 1; i < 6; i++) { ctx.beginPath(); ctx.moveTo(W * i / 6, 0); ctx.lineTo(W * i / 6, H); ctx.stroke(); }
+  if (DRAW.length < 2) {
+    ctx.fillStyle = "#9CA3AF"; ctx.font = "14px -apple-system, Helvetica, Arial, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("Draw here: old \u2192 today", W / 2, H / 2);
+    return;
+  }
+  const p = [...DRAW].sort((a, b) => a[0] - b[0]);
+  ctx.strokeStyle = "#1A4DB3"; ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.beginPath(); p.forEach(([x, y], i) => { const X = x * W, Y = (1 - y) * H; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.stroke();
+}
+function setDrawPreset(vals) {
+  DRAW = vals.map((v, i) => [i / (vals.length - 1), v]);
+  try { localStorage.setItem(DRAW_KEY, JSON.stringify(DRAW)); } catch {}
+  drawPad();
+}
+(function wireDrawPad() {
+  const cv = $("dCanvas"); if (!cv) return;
+  let drawing = false;
+  const pt = e => { const r = cv.getBoundingClientRect(); return [Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height))]; };
+  cv.addEventListener("pointerdown", e => { drawing = true; cv.setPointerCapture(e.pointerId); DRAW = [pt(e)]; drawPad(); e.preventDefault(); });
+  cv.addEventListener("pointermove", e => {
+    if (!drawing) return;
+    const q = pt(e), last = DRAW[DRAW.length - 1];
+    if (q[0] > last[0] + 0.002) DRAW.push(q);                // keep the line moving left -> right
+    else if (Math.abs(q[0] - last[0]) <= 0.002) last[1] = q[1];
+    drawPad(); e.preventDefault();
+  });
+  const stop = () => { if (!drawing) return; drawing = false; try { localStorage.setItem(DRAW_KEY, JSON.stringify(DRAW)); } catch {} };
+  cv.addEventListener("pointerup", stop); cv.addEventListener("pointercancel", stop);
+  $("dClear").onclick = () => { DRAW = []; try { localStorage.removeItem(DRAW_KEY); } catch {} drawPad(); };
+  document.querySelectorAll("#dPresets button").forEach(b => { b.onclick = () => setDrawPreset(DRAW_PRESETS[b.dataset.p]); });
+  window.addEventListener("resize", drawPad);
+})();
+function drawSettings() {
+  return {
+    win: clampInt($("dWin").value, 10, 400, 60),
+    minScore: clampInt($("dScore").value, 30, 100, 75),
+    turn: Math.max(0, parseFloat($("dTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("dMinPrice").value) || 0),
+    shape: DRAW.length >= 3 ? resampleDraw(DRAW, clampInt($("dWin").value, 10, 400, 60)) : null,
+  };
+}
+function analyseDraw(c, cfg) {
+  const n = c.length, W = cfg.win;
+  if (!cfg.shape || n < W + 5) return null;
+  const C = c.map(x => x.close), V = c.map(x => x.volume), k = n - 1;
+  const turn = C[k] * smaAt(V, k, 20) / 1e7;
+  if (C[k] < cfg.minPrice || turn < cfg.turn) return null;
+  const s = C.slice(n - W);
+  let mn = Infinity, mx = -Infinity; for (const v of s) { mn = Math.min(mn, v); mx = Math.max(mx, v); }
+  if (!(mx > mn)) return null;
+  const a = s.map(v => (v - mn) / (mx - mn));
+  const d = cfg.shape;
+  let dmn = Infinity, dmx = -Infinity; for (const v of d) { dmn = Math.min(dmn, v); dmx = Math.max(dmx, v); }
+  const b = dmx > dmn ? d.map(v => (v - dmn) / (dmx - dmn)) : d.map(() => 0.5);
+  const ma = a.reduce((x, y) => x + y, 0) / W, mb = b.reduce((x, y) => x + y, 0) / W;
+  let sab = 0, saa = 0, sbb = 0, se = 0;
+  for (let i = 0; i < W; i++) { const x = a[i] - ma, y = b[i] - mb; sab += x * y; saa += x * x; sbb += y * y; se += (a[i] - b[i]) ** 2; }
+  const corr = saa && sbb ? sab / Math.sqrt(saa * sbb) : 0;
+  const rmse = Math.sqrt(se / W);
+  const score = Math.round(100 * (0.5 * Math.max(0, corr) + 0.5 * Math.max(0, 1 - 2.5 * rmse)));
+  if (score < cfg.minScore) return null;
+  const chg = (C[k] / s[0] - 1) * 100;
+  return { mode: "draw", score, close: C[k], date: ymd(c[k].date), win: W, series: a, shape: b, chg: Math.round(chg * 10) / 10,
+    hi: mx, lo: mn, turn: Math.round(turn * 10) / 10, corr: Math.round(corr * 100) / 100 };
+}
+function miniOverlay(cv, a, b) {
+  const dpr = window.devicePixelRatio || 1, W = 140, H = 44;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + "px"; cv.style.height = H + "px";
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const line = (arr, col, w, dash) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash); ctx.beginPath();
+    arr.forEach((v, i) => { const X = 2 + i / (arr.length - 1) * (W - 4), Y = 2 + (1 - v) * (H - 4); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.stroke(); };
+  line(b, "#9CA3AF", 2, [4, 3]); line(a, "#1A4DB3", 1.6, []);
+}
+
 /* ───────── Tight near the highs — anticipation breakout ("Big move → quiet base → tight pivot → volume breakout")
  * 1. Strength first: a big advance (default 50%+) into the base.
  * 2. Quiet base: a shallow sideways base at the 52-week high, above a rising 21 EMA and 50-day.
@@ -2807,7 +2918,16 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "tight") {
+  if (r.mode === "draw") {
+    add("Match", `${r.score}%`, r.score >= 90 ? "up" : "");
+    add("Compared", `last ${r.win} trading days`);
+    add("Move over the period", `${r.chg >= 0 ? "+" : ""}${r.chg}%`, r.chg >= 0 ? "up" : "down");
+    add("Range in the period", `\u20B9${r.lo.toFixed(2)} \u2013 \u20B9${r.hi.toFixed(2)}`);
+    add("Close", `\u20B9${r.close.toFixed(2)}`);
+    add("Turnover 20d", `\u20B9${r.turn} Cr`);
+    $("cwNote").textContent = `The last ${r.win} daily closes, scaled to the same box as your drawing, follow its shape with a ${r.score}% match. Set the daily chart to about ${r.win} days or more (Step 3) to see the same stretch.`;
+    mark = {};
+  } else if (r.mode === "tight") {
     add("Match", `${r.score}%${r.near ? ` \u00B7 weak: ${r.near}` : " \u00B7 all rules met"}`, r.score >= 90 ? "up" : r.score < 75 ? "down" : "");
     add("Stage", r.status === "breakout" ? "4 \u00B7 Volume breakout today" : "3 \u00B7 Tight under the line (anticipation)", "up");
     add(r.status === "ready" ? "Buy above" : "Entry", `\u20B9${r.trigger.toFixed(2)}`, "up");
@@ -3557,7 +3677,8 @@ async function runVcp() {
   if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
   const mode = $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
-  const cfg = mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  if (mode === "draw" && DRAW.length < 3) { toast("Draw a pattern (or pick a preset) first"); return; }
+  const cfg = mode === "draw" ? drawSettings() : mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -3601,7 +3722,7 @@ async function runVcp() {
       if (!c.length) noData++;
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
-      let r = c.length ? (mode === "tight" ? analyseTight(c, cfg) : mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      let r = c.length ? (mode === "draw" ? analyseDraw(c, cfg) : mode === "tight" ? analyseTight(c, cfg) : mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
       if ((mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
@@ -3635,7 +3756,9 @@ async function runVcp() {
 }
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
 const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3, base: 4 };
-const sortVcp = arr => [...arr].sort((a, b) => a.mode === "tight"
+const sortVcp = arr => [...arr].sort((a, b) => a.mode === "draw"
+  ? (b.score - a.score)
+  : a.mode === "tight"
   ? (b.score - a.score) || ((a.status === "breakout" ? 0 : 1) - (b.status === "breakout" ? 0 : 1)) || (a.tightPct - b.tightPct)
   : a.mode === "undercut"
   ? (UC_ORDER[a.status] - UC_ORDER[b.status]) || ((a.ext > 6) - (b.ext > 6)) || (a.risk - b.risk)
@@ -3654,7 +3777,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "tight"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "tight" ? "Tight near highs" : vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "draw" ? "Drawn pattern" : vcp.mode === "tight" ? "Tight near highs" : vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -3723,6 +3846,21 @@ function renderVcp() {
       row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
       row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
       if (r.day1) row.querySelector(".vdist").classList.add("up");
+      row.onclick = () => openChartWin(r.symbol, vcpSource());
+      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
+      box.appendChild(row);
+      continue;
+    }
+    if (r.mode === "draw") {
+      row.classList.add("irow");
+      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+      row.querySelector("b").textContent = r.symbol;
+      const tg = row.querySelector(".itags");
+      [`Match ${r.score}%`, `Last ${r.win} days`, `${r.chg >= 0 ? "+" : ""}${r.chg}% over the period`].forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.score >= 90 ? " ib" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
+      const lev = row.querySelector(".ilev");
+      if (r.series && r.shape) { const mc = document.createElement("canvas"); mc.setAttribute("aria-label", "Stock line over your drawing"); lev.appendChild(mc); miniOverlay(mc, r.series, r.shape); }
+      const dd = row.querySelector(".vdist");
+      dd.textContent = `\u20B9${r.close.toFixed(2)}`;
       row.onclick = () => openChartWin(r.symbol, vcpSource());
       row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
       box.appendChild(row);
@@ -3871,7 +4009,13 @@ $("vScan").onclick = runVcp;
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut"; $("setTight").hidden = m !== "tight";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut"; $("setTight").hidden = m !== "tight"; $("drawBox").hidden = m !== "draw";
+  if (m === "draw") {
+    $("vDesc").textContent = "Draw a price shape (or pick a preset). Every stock\u2019s last N days of closes are scaled to the same box and compared with your drawing; results are ranked by match %. Like Chartink\u2019s pattern search.";
+    drawPad();
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    return;
+  }
   if (m === "tight") {
     $("vDesc").textContent = "Strength first, tightness next, volume confirms: a big move (50%+), a shallow base at the 52-week high above a rising 21 EMA / 50-day, then the last few candles tiny and pressed under the breakout line on drying volume (Ready \u2014 anticipation entry), or today closing above the line on heavy volume (Breakout).";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
@@ -3941,7 +4085,9 @@ $("vPdf").onclick = () => {
   generate(syms, { notes });
 };
 function scanItem(r) {
-        const note = r.mode === "tight"
+        const note = r.mode === "draw"
+          ? `Drawn pattern: match ${r.score}% over the last ${r.win} days`
+          : r.mode === "tight"
           ? `Match ${r.score}% \u00B7 ${r.status === "breakout" ? "Volume breakout" : "Tight near highs"}: ${r.status === "ready" ? "buy above" : "entry"} \u20B9${r.trigger.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, line \u20B9${r.line.toFixed(2)}, ${r.days || ""}tight ${r.tightPct}%`
           : r.mode === "undercut"
           ? `${({ base: "Base at top (no undercut yet)", watch: "Undercut, turning up", reclaim: "Reclaim today", inrange: "Reclaimed", breakout: "Breakout" })[r.status]}: ${r.status === "base" ? "watch low" : "entry"} \u20B9${r.entry.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, range \u20B9${r.sup.toFixed(1)}-${r.top.toFixed(1)}${r.ucPct ? `, undercut ${r.ucPct}%` : ""}`

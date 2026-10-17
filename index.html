@@ -259,6 +259,10 @@
   #brList { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
   #brList .bsyms { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; max-height: 220px; overflow-y: auto; }
   #brList .bsyms button { font: 13px -apple-system, Helvetica, Arial, sans-serif; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+  #dCanvas { width: 100%; height: 180px; display: block; border: 1px solid var(--line); border-radius: 8px; touch-action: none; background: #fff; margin-top: 8px; }
+  .dtools { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin: 8px 0; }
+  #dPresets { display: flex; flex-wrap: wrap; gap: 6px; }
+  #dPresets button { font: 13px -apple-system, Helvetica, Arial, sans-serif; border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 5px 10px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -305,6 +309,7 @@
     <h2>Scanner</h2>
     <label class="vlab" for="vMode">Style</label>
     <select id="vMode" class="vsel">
+      <option value="draw">Draw a pattern (like Chartink)</option>
       <option value="tight">Tight near the highs — anticipation breakout</option>
       <option value="undercut">Range undercut &amp; rally (shakeout under the range)</option>
       <option value="start">Manas Arora entry — strong start (purple ▲)</option>
@@ -318,6 +323,19 @@
       <option value="learned">Learned from Manas Arora’s trades (or your examples)</option>
     </select>
     <p class="small" id="vDesc"></p>
+    <div id="drawBox" hidden>
+      <canvas id="dCanvas" aria-label="Drawing pad: draw a price shape from left to right"></canvas>
+      <div class="dtools">
+        <span id="dPresets"><button type="button" data-p="flat">Flat base</button><button type="button" data-p="cup">Cup &amp; handle</button><button type="button" data-p="dbl">Double bottom</button><button type="button" data-p="vcp">VCP</button><button type="button" data-p="undercut">Undercut &amp; rally</button><button type="button" data-p="tight">Tight near highs</button><button type="button" data-p="pullback">Pullback</button></span>
+        <button type="button" class="link2" id="dClear">Clear</button>
+      </div>
+      <div class="vgrid">
+        <label>Compare the last <select id="dWin"><option value="20">20 days</option><option value="40">40 days</option><option value="60" selected>60 days (3 months)</option><option value="90">90 days</option><option value="120">120 days (6 months)</option><option value="250">250 days (1 year)</option></select></label>
+        <label>Shortlist: match ≥ <input type="number" id="dScore" value="75" min="30" max="100" step="5"> %</label>
+        <label>Min 20-day turnover ₹ <input type="number" id="dTurn" value="5" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="dMinPrice" value="20" min="0"></label>
+      </div>
+    </div>
     <div id="learnBox" hidden>
       <label class="vlab" for="lExamples">Example trades (SYMBOL, entry date, entry price — one per line)</label>
       <textarea id="lExamples" rows="6" spellcheck="false" autocapitalize="characters"></textarea>
@@ -594,7 +612,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 56 · Tight near highs: match % shortlist</p>
+  <p class="small" style="text-align:center">Version 57 · Draw a pattern scanner</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -662,8 +680,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=56"></script>
-<script src="app.js?v=56"></script>
+<script src="symbols.js?v=57"></script>
+<script src="app.js?v=57"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
