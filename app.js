@@ -4362,7 +4362,7 @@ function renderBreadth() {
   // table
   const tb = $("brTable"); tb.innerHTML = "";
   const head = tb.insertRow();
-  for (const h of ["Date", "Up 4.5%+", "Down 4.5%+", "Up 20% in 5d", "Down 20% in 5d", "Above 20d", "Below 20d", "% above 50d", "% above 200d", "52w highs", "52w lows"]) {
+  for (const h of ["Date", "Up 4.5%+", "Down 4.5%+", "Up 20% in 5d", "Down 20% in 5d", "Above 20d", "Below 20d", "Above 50d", "Above 200d", "52w highs", "52w lows"]) {
     const th = document.createElement("th"); th.textContent = h; head.appendChild(th);
   }
   const L = BREADTH.lists || {};
@@ -4387,9 +4387,11 @@ function renderBreadth() {
     cell(r.dn20, r.dn20 > r.up20 ? "down" : "", l.dn20, `Down 20%+ in 5 days to ${fmtD(r.d)}`);
     const k = cell(r.a20, "key");
     if (p && p.a20) { const ch = Math.round((r.a20 / p.a20 - 1) * 100); const s = document.createElement("small"); s.textContent = `${ch >= 0 ? "+" : ""}${ch}%`; s.className = ch >= 0 ? "up" : "down"; k.appendChild(s); }
-    cell(r.b20);
-    cell(`${brPct(r.a50, r.b50)}%`);
-    cell(`${brPct(r.a200, r.b200)}%`);
+    { const td = cell(r.b20); const sm = document.createElement("small"); sm.textContent = `${brPct(r.b20, r.a20)}%`; sm.className = "pct"; td.appendChild(sm); }
+    for (const [a, b] of [[r.a50, r.b50], [r.a200, r.b200]]) {      // number of stocks + share of all stocks
+      const td = cell(a.toLocaleString("en-IN"));
+      const sm = document.createElement("small"); sm.textContent = `${brPct(a, b)}%`; sm.className = "pct"; td.appendChild(sm);
+    }
     cell(r.hi52, r.hi52 > r.lo52 ? "up" : "", l.hi52, `52-week highs on ${fmtD(r.d)}`);
     cell(r.lo52, r.lo52 > r.hi52 ? "down" : "");
   });

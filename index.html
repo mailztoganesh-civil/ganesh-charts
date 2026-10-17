@@ -253,6 +253,7 @@
   .brtab th:first-child { background: #F8F9FB; }
   .brtab td.key { background: #EEF3FF; font-weight: 600; }
   .brtab td small { font-size: 10px; font-weight: 400; margin-left: 4px; }
+  .brtab td small.pct { color: var(--sec); }
   .brtab button { font: inherit; color: var(--blue); background: none; border: 0; padding: 0; text-decoration: underline; cursor: pointer; }
   .brtab button { min-height: 0; height: auto; line-height: 1.3; width: auto; }
   .brtab td.up button { color: var(--green); } .brtab td.down button { color: var(--red); }
@@ -612,7 +613,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 57 · Draw a pattern scanner</p>
+  <p class="small" style="text-align:center">Version 58 · breadth table shows counts</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -680,8 +681,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=57"></script>
-<script src="app.js?v=57"></script>
+<script src="symbols.js?v=58"></script>
+<script src="app.js?v=58"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
