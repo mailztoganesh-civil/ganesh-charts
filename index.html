@@ -260,6 +260,23 @@
   #brList { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
   #brList .bsyms { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; max-height: 220px; overflow-y: auto; }
   #brList .bsyms button { font: 13px -apple-system, Helvetica, Arial, sans-serif; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+  /* Momentum portfolio */
+  .motabs { display: flex; gap: 6px; margin: 10px 0 0; overflow-x: auto; }
+  .motabs button { font: 600 13px -apple-system, Helvetica, Arial, sans-serif; border: 1px solid var(--line); background: #fff; color: var(--navy); border-radius: 14px; padding: 6px 12px; white-space: nowrap; cursor: pointer; }
+  .motabs button[aria-selected=true] { background: var(--navy); border-color: var(--navy); color: #fff; }
+  .mosyms { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .mosyms button { font: 13px -apple-system, Helvetica, Arial, sans-serif; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 5px 8px; cursor: pointer; }
+  .mosyms button.buy { border-color: var(--green); color: var(--green); font-weight: 600; }
+  .mosyms button.sell { border-color: var(--red); color: var(--red); font-weight: 600; }
+  .mohead { font-size: 13px; font-weight: 600; margin-top: 10px; }
+  .mohead.buy { color: var(--green); } .mohead.sell { color: var(--red); }
+  .brtab td .tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 4px; margin-left: 6px; }
+  .brtab td .tag.new { background: #E3F6EA; color: var(--green); }
+  .brtab td .tag.hold { background: #EEF0F4; color: var(--sec); }
+  .brtab tr.dim td { color: var(--sec); }
+  #moRules { margin-top: 10px; font-size: 13px; }
+  #moRules summary { cursor: pointer; color: var(--blue); font-weight: 600; }
+  #moRules ol { margin: 8px 0 0; padding-left: 20px; } #moRules li { margin: 3px 0; }
   #dCanvas { width: 100%; height: 180px; display: block; border: 1px solid var(--line); border-radius: 8px; touch-action: none; background: #fff; margin-top: 8px; }
   .dtools { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin: 8px 0; }
   #dPresets { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -304,6 +321,35 @@
       <button type="button" class="wbtn primary" id="brOpen">Open charts</button>
       <button type="button" class="wbtn" id="brPdf">Make PDF</button>
     </div>
+  </section>
+
+  <section class="card" id="moCard">
+    <div class="brhead"><h2>Momentum portfolio</h2><button type="button" class="link2" id="moRefresh">Refresh</button></div>
+    <p class="small" id="moNote">Loading momentum data…</p>
+    <div class="brtiles" id="moTiles"></div>
+    <div id="moTrades"></div>
+    <div class="motabs" role="tablist">
+      <button type="button" role="tab" id="moTabPf" aria-selected="true">Portfolio</button>
+      <button type="button" role="tab" id="moTabLive" aria-selected="false">Live ranking</button>
+      <button type="button" role="tab" id="moTabHist" aria-selected="false">Past months</button>
+    </div>
+    <p class="small" id="moTabNote"></p>
+    <div class="brwrap"><table class="brtab" id="moTable"></table></div>
+    <button type="button" class="wbtn primary" id="moOpen">Open charts</button>
+    <button type="button" class="wbtn" id="moPdf">Make PDF</button>
+    <button type="button" class="wbtn" id="moScan">Scan with a screener</button>
+    <details id="moRules">
+      <summary>Rules</summary>
+      <ol>
+        <li><b>When:</b> rank on the last trading day of each month (close); trade the next trading day at the open.</li>
+        <li><b>Universe:</b> NSE stocks with 50-day average traded value of at least <span id="moMinCr">₹10</span> crore, price ₹20 or more, and 1 year of history.</li>
+        <li><b>Score:</b> 12-month return skipping the last month (close 21 days ago ÷ close 252 days ago − 1), divided by the volatility of daily returns over the last 126 days. Only positive scores.</li>
+        <li><b>Select:</b> the top <span id="moTopN">20</span>, equal weight.</li>
+        <li><b>Rebalance:</b> sell stocks that left the top <span class="moN">20</span>, buy new entries, leave the rest unchanged.</li>
+        <li><b>No other exits:</b> no stop-loss, no target, no market filter. Follow every signal, including in losing months.</li>
+      </ol>
+      <p class="small">Backtest 2013–2026 (with costs): about 27% a year vs 12% for Nifty 500, but with drawdowns of 35–40% and losing years in 2016, 2018, 2019 and 2025. Most of the extra return came from smaller stocks; real results will be lower.</p>
+    </details>
   </section>
 
   <section class="card" id="vcpCard">
@@ -353,6 +399,8 @@
       <option value="step1">Step 1 selection</option>
       <option value="watch">Current watchlist</option>
       <option value="all">All NSE stocks</option>
+      <option value="mom">Momentum portfolio</option>
+      <option value="momlive">Momentum live ranking</option>
     </select>
     <details class="vset">
       <summary>Scan settings</summary>
@@ -613,7 +661,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 58 · breadth table shows counts</p>
+  <p class="small" style="text-align:center">Version 59 · momentum portfolio</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">

@@ -3658,6 +3658,8 @@ function vcpUniverse() {
   const v = $("vUniverse").value;
   if (v === "watch") return { name: `Watchlist: ${activeList().name}`, symbols: activeList().items.map(i => i.symbol) };
   if (v === "all") return { name: "All NSE stocks", symbols: NSE_SYMBOLS.map(([s]) => s) };
+  if (v === "mom") return { name: MOMO ? `Momentum portfolio ${fmtD(MOMO.rebalance)}` : "Momentum portfolio", symbols: MOMO && MOMO.portfolio ? MOMO.portfolio.map(p => p.s) : [] };
+  if (v === "momlive") return { name: MOMO ? `Momentum live ${fmtD(MOMO.dataDate)}` : "Momentum live ranking", symbols: MOMO && MOMO.live ? MOMO.live.map(p => p.s) : [] };
   return { name: state.mode === "letters" ? "Letters selection" : "Screener CSV", symbols: filteredStocks() };
 }
 function vcpUniverseLabels() {
@@ -3666,6 +3668,9 @@ function vcpUniverseLabels() {
   sel.options[0].textContent = `Step 1 selection (${step1})`;
   sel.options[1].textContent = `Current watchlist: ${activeList().name} (${activeList().items.length})`;
   sel.options[2].textContent = `All NSE stocks (${NSE_SYMBOLS.length}, slow)`;
+  const mp = MOMO && MOMO.portfolio ? MOMO.portfolio.length : 0, ml = MOMO && MOMO.live ? MOMO.live.length : 0;
+  sel.options[3].textContent = mp ? `Momentum portfolio (${mp})` : "Momentum portfolio (no data yet)";
+  sel.options[4].textContent = ml ? `Momentum live ranking (top ${ml})` : "Momentum live ranking (no data yet)";
   sel.value = cur;
   if (!vcpBusy) $("vScan").textContent = `Scan ${vcpUniverse().symbols.length} stocks`;
 }
@@ -4461,3 +4466,158 @@ $("brMore").onclick = () => { brShown += 30; renderBreadth(); };
 $("brRefresh").onclick = () => loadBreadth(true);
 window.addEventListener("resize", () => { if (BREADTH && BREADTH.rows && BREADTH.rows.length) drawBreadthChart(); });
 loadBreadth();
+
+/* ───────── Momentum portfolio (data/momentum.json, written every weekday evening by GitHub Actions) ─────────
+ * Rule-based monthly rotation: top 20 NSE stocks by 12-month return (skipping the last month) divided by
+ * volatility. The list changes only at month end; buys = new entries, sells = stocks that dropped out. */
+var MOMO = null;   // var: the Scanner reads it before this part of the file runs
+let moTab = "pf", moSel = { name: "", syms: [], notes: new Map(), day: "" };
+async function loadMomentum(force) {
+  $("moNote").textContent = "Loading momentum data…";
+  try {
+    const res = await fetch(`data/momentum.json${force ? `?t=${Date.now()}` : ""}`, { cache: "no-cache" });
+    MOMO = res.ok ? await res.json() : null;
+  } catch { MOMO = null; }
+  renderMomentum();
+  vcpUniverseLabels();               // Scanner's "Scan" list shows the momentum stock counts
+}
+const moSigned = v => v === null || v === undefined ? "–" : `${v >= 0 ? "+" : ""}${v}%`;
+function moSymBtn(sym, label, cls, note) {
+  const b = document.createElement("button"); b.type = "button"; b.textContent = label;
+  if (cls) b.className = cls;
+  b.onclick = () => openChartWin(sym, momentumSource(sym, note));
+  return b;
+}
+function renderMomentum() {
+  const M = MOMO;
+  const hide = !M || !Array.isArray(M.portfolio) || !M.portfolio.length;
+  for (const id of ["moTiles", "moTrades", "moTable", "moTabNote"]) $(id).innerHTML = "";
+  $("moOpen").hidden = $("moPdf").hidden = $("moScan").hidden = hide;
+  document.querySelector("#moCard .motabs").hidden = hide;
+  if (hide) {
+    $("moNote").textContent = "No momentum data yet. It is created automatically by the “Update momentum portfolio” action on GitHub (every weekday 4:45 pm IST, and once right after upload).";
+    return;
+  }
+  const R = M.rules || {};
+  $("moMinCr").textContent = `₹${R.minCr ?? 10}`;
+  $("moTopN").textContent = R.topN ?? 20;
+  document.querySelectorAll("#moRules .moN").forEach(e => { e.textContent = R.topN ?? 20; });
+  const upd = new Date(M.updated);
+  $("moNote").textContent = `List from ${fmtD(M.rebalance)} close · trade at the open on ${fmtD(M.tradeOn)} · prices to ${fmtD(M.dataDate)} · updated ${upd.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`;
+
+  const buys = M.portfolio.filter(p => p.status === "NEW"), holds = M.portfolio.filter(p => p.status !== "NEW");
+  const sells = M.sells || [];
+  const cur = (M.history || []).find(h => h.d === M.rebalance);
+  const tiles = $("moTiles");
+  const tile = (label, val, sub, cls) => {
+    const d = document.createElement("div"); d.className = "brtile";
+    d.innerHTML = "<small></small><b></b><span></span>";
+    d.querySelector("small").textContent = label; d.querySelector("b").textContent = val;
+    const s = d.querySelector("span"); s.textContent = sub || ""; if (cls) s.className = cls;
+    tiles.appendChild(d);
+  };
+  tile("Buy (new)", buys.length, `of ${M.portfolio.length}`, buys.length ? "up" : "");
+  tile("Sell (dropped out)", sells.length, "", sells.length ? "down" : "");
+  tile("Hold", holds.length, "unchanged");
+  if (cur && cur.ret !== null) tile("This month so far", moSigned(cur.ret), "equal weight, before costs", cur.ret >= 0 ? "up" : "down");
+
+  // this month's trades
+  const tr = $("moTrades");
+  const group = (title, cls, items) => {
+    if (!items.length) return;
+    const h = document.createElement("div"); h.className = `mohead ${cls}`; h.textContent = title; tr.appendChild(h);
+    const box = document.createElement("div"); box.className = "mosyms";
+    for (const [sym, label, note] of items) box.appendChild(moSymBtn(sym, label, cls, note));
+    tr.appendChild(box);
+  };
+  group(`BUY at the open on ${fmtD(M.tradeOn)} · ${(100 / M.portfolio.length).toFixed(0)}% of capital each`, "buy",
+    buys.map(p => [p.s, `${p.s} #${p.rank}`, `Momentum BUY ${fmtD(M.rebalance)}: rank #${p.rank}, 12-1m ${moSigned(p.ret)}`]));
+  group(`SELL at the open on ${fmtD(M.tradeOn)}`, "sell",
+    sells.map(x => [x.s, `${x.s} ${x.nowRank ? `now #${x.nowRank}` : "unranked"}`, `Momentum SELL ${fmtD(M.rebalance)}: was #${x.prevRank}, now ${x.nowRank ? `#${x.nowRank}` : "unranked"}`]));
+  if (!buys.length && !sells.length) {
+    const p = document.createElement("p"); p.className = "small"; p.textContent = "No changes this month: keep all holdings."; tr.appendChild(p);
+  }
+  renderMomentumTab();
+}
+function renderMomentumTab() {
+  const M = MOMO; if (!M) return;
+  for (const [id, k] of [["moTabPf", "pf"], ["moTabLive", "live"], ["moTabHist", "hist"]]) $(id).setAttribute("aria-selected", moTab === k);
+  const tb = $("moTable"); tb.innerHTML = "";
+  const head = cols => { const r = tb.insertRow(); for (const h of cols) { const th = document.createElement("th"); th.textContent = h; r.appendChild(th); } };
+  const symCell = (row, sym, note, tag) => {
+    const td = row.insertCell();
+    const b = document.createElement("button"); b.type = "button"; b.textContent = sym;
+    b.onclick = () => openChartWin(sym, momentumSource(sym, note)); td.appendChild(b);
+    if (tag) { const t = document.createElement("span"); t.className = `tag ${tag.toLowerCase()}`; t.textContent = tag === "NEW" ? "BUY" : "HOLD"; td.appendChild(t); }
+  };
+  const notes = new Map();
+  if (moTab === "pf") {
+    $("moTabNote").textContent = `The ${M.portfolio.length} stocks to hold this month (ranked ${fmtD(M.rebalance)}). ${M.eligible} of ${M.universe} stocks passed the liquidity and price filters.`;
+    head(["Stock", "Rank", "Last month", "12-1m return", "Volatility", "Score", "Price", "Turnover ₹cr"]);
+    for (const p of M.portfolio) {
+      const note = `Momentum ${p.status === "NEW" ? "BUY" : "HOLD"} ${fmtD(M.rebalance)}: rank #${p.rank}, 12-1m ${moSigned(p.ret)}`;
+      notes.set(p.s, note);
+      const r = tb.insertRow(); symCell(r, p.s, note, p.status);
+      r.insertCell().textContent = `#${p.rank}`;
+      r.insertCell().textContent = p.prevRank ? `#${p.prevRank}` : "–";
+      const c = r.insertCell(); c.textContent = moSigned(p.ret); c.className = p.ret >= 0 ? "up" : "down";
+      r.insertCell().textContent = `${p.vol}%`;
+      r.insertCell().textContent = p.score;
+      r.insertCell().textContent = p.price.toLocaleString("en-IN");
+      r.insertCell().textContent = p.turn.toLocaleString("en-IN");
+    }
+    moSel = { name: `Momentum ${fmtD(M.rebalance)}`, syms: M.portfolio.map(p => p.s), notes, day: M.rebalance };
+  } else if (moTab === "live") {
+    $("moTabNote").textContent = `Ranking on ${fmtD(M.dataDate)} close. Preview only — don't trade on it; the list changes only at month end. Grey rows are not in this month's portfolio.`;
+    head(["Stock", "Rank", "12-1m return", "Volatility", "Score", "Price"]);
+    for (const p of M.live || []) {
+      const note = `Momentum live #${p.rank} on ${fmtD(M.dataDate)}`;
+      notes.set(p.s, note);
+      const r = tb.insertRow(); if (!p.inList) r.className = "dim";
+      symCell(r, p.s, note);
+      r.insertCell().textContent = `#${p.rank}`;
+      const c = r.insertCell(); c.textContent = moSigned(p.ret); c.className = p.ret >= 0 ? "up" : "down";
+      r.insertCell().textContent = `${p.vol}%`;
+      r.insertCell().textContent = p.score;
+      r.insertCell().textContent = p.price.toLocaleString("en-IN");
+    }
+    moSel = { name: `Momentum live ${fmtD(M.dataDate)}`, syms: (M.live || []).map(p => p.s), notes, day: M.dataDate };
+  } else {
+    $("moTabNote").textContent = "What the rules picked each month and how that list did until the next month end (equal weight, close to close, before costs). Tap a month to open its stocks.";
+    head(["List of", "Held until", "Return", "Stocks"]);
+    for (const h of M.history || []) {
+      const r = tb.insertRow();
+      const td = r.insertCell();
+      const b = document.createElement("button"); b.type = "button"; b.textContent = fmtD(h.d);
+      b.onclick = () => {
+        const n = new Map(h.syms.map(s => [s, `Momentum list of ${fmtD(h.d)}`]));
+        moSel = { name: `Momentum ${fmtD(h.d)}`, syms: h.syms, notes: n, day: h.d };
+        openChartWin(h.syms[0], momentumSource(h.syms[0]));
+      };
+      td.appendChild(b);
+      r.insertCell().textContent = h.partial ? `${fmtD(h.to)} (so far)` : fmtD(h.to);
+      const c = r.insertCell(); c.textContent = moSigned(h.ret); if (h.ret !== null) c.className = h.ret >= 0 ? "up" : "down";
+      r.insertCell().textContent = h.syms.length;
+    }
+    moSel = { name: `Momentum ${fmtD(M.rebalance)}`, syms: M.portfolio.map(p => p.s), notes: new Map(M.portfolio.map(p => [p.s, `Momentum list of ${fmtD(M.rebalance)}`])), day: M.rebalance };
+  }
+}
+function momentumSource(sym, note) {
+  const syms = moSel.syms.includes(sym) ? moSel.syms : [sym];
+  const name = moSel.syms.includes(sym) ? moSel.name : `Momentum ${fmtD(MOMO.rebalance)}`;
+  return { kind: "list", name, symbols: syms,
+    item: s => ({ symbol: s, addedOn: moSel.day || MOMO.rebalance, note: (s === sym && note) || moSel.notes.get(s) || name }) };
+}
+$("moTabPf").onclick = () => { moTab = "pf"; renderMomentumTab(); };
+$("moTabLive").onclick = () => { moTab = "live"; renderMomentumTab(); };
+$("moTabHist").onclick = () => { moTab = "hist"; renderMomentumTab(); };
+$("moOpen").onclick = () => { if (moSel.syms.length) openChartWin(moSel.syms[0], momentumSource(moSel.syms[0])); };
+$("moPdf").onclick = () => { if (moSel.syms.length) makeWlPdf([{ name: moSel.name, symbols: moSel.syms }]); };
+$("moRefresh").onclick = () => loadMomentum(true);
+$("moScan").onclick = () => {       // hand this tab's list to the Scanner, then pick a screener there
+  $("vUniverse").value = moTab === "live" ? "momlive" : "mom";
+  vcpUniverseLabels();
+  $("vcpCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  toast("Momentum stocks selected in Scanner — choose a Style and tap Scan");
+};
+loadMomentum();
