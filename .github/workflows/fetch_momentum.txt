@@ -1,0 +1,213 @@
+"""
+Ganesh Charts - NSE Momentum Rotation portfolio (monthly, rule based).
+
+Runs on GitHub Actions after the market closes. Downloads ~2 years of daily prices from Yahoo
+for every symbol in symbols.js and applies these fixed rules:
+
+  When      Ranked on the last trading day of each month (close); trade next day at the open.
+  Universe  50-day average traded value >= MIN_CR crore (default 10), price >= Rs 20,
+            at least 1 year of history.
+  Score     Return = Close 21 trading days ago / Close 252 trading days ago - 1
+            Volatility = std-dev of daily returns over the last 126 days
+            Score = Return / Volatility   (only stocks with Score > 0)
+  Select    Top TOP_N (default 20), equal weight.
+  Rebalance Sell stocks that left the top 20, buy new entries, keep the rest unchanged.
+            No stop-loss, no target, no market filter.
+
+Writes data/momentum.json:
+  portfolio  the current month's 20 stocks, each marked NEW (buy) or HOLD
+  sells      stocks in last month's list that dropped out (sell)
+  live       today's ranking (preview only - the list only changes at month end)
+  history    the last 12 month-end lists, with each month's return (close to close)
+"""
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone, timedelta
+
+import numpy as np
+import pandas as pd
+
+ROOT = os.environ.get("GITHUB_WORKSPACE") or os.getcwd()
+OUT = os.path.join(ROOT, "data", "momentum.json")
+BATCH = int(os.environ.get("BATCH", "150"))
+TOP_N = int(os.environ.get("TOP_N", "20"))
+MIN_CR = float(os.environ.get("MIN_CR", "10"))
+MIN_PRICE = 20.0
+SKIP, LOOK, VOLWIN, LIQWIN = 21, 252, 126, 50
+
+
+def load_symbols():
+    src = open(os.path.join(ROOT, "symbols.js"), encoding="utf-8").read()
+    return sorted(set(re.findall(r'\[\s*"([^"]+)"\s*,', src)))
+
+
+def download(symbols):
+    import yfinance as yf
+    closes, vols = {}, {}
+    for i in range(0, len(symbols), BATCH):
+        chunk = symbols[i:i + BATCH]
+        tick = [s + ".NS" for s in chunk]
+        df = None
+        for attempt in range(3):
+            try:
+                df = yf.download(tick, period="2y", interval="1d", group_by="ticker",
+                                 auto_adjust=True, threads=True, progress=False)
+                break
+            except Exception as e:
+                print("retry", i, e, file=sys.stderr)
+                time.sleep(10 * (attempt + 1))
+        if df is None:
+            continue
+        for s, t in zip(chunk, tick):
+            try:
+                sub = df[t] if isinstance(df.columns, pd.MultiIndex) else df
+                if sub["Close"].dropna().shape[0] < 30:
+                    continue
+                closes[s] = sub["Close"]
+                vols[s] = sub["Volume"]
+            except Exception:
+                pass
+        print(f"{min(i + BATCH, len(symbols))}/{len(symbols)} downloaded, {len(closes)} with data", flush=True)
+        time.sleep(1)
+    C = pd.DataFrame(closes).sort_index()
+    V = pd.DataFrame(vols).reindex(C.index)
+    C.index = pd.to_datetime(C.index).tz_localize(None).normalize()
+    V.index = C.index
+    keep = ~C.index.duplicated(keep="last")
+    return C[keep], V[keep]
+
+
+def clean(C, V):
+    """Drop half-empty days (holidays / bad Yahoo rows)."""
+    n = C.notna().sum(axis=1)
+    good = n >= 0.5 * n.max()
+    return C[good], V[good]
+
+
+def month_ends(dates, today):
+    """Last trading day of every month. The current month only counts once it is over,
+    or when today is its last weekday and today's close is in."""
+    s = pd.Series(dates, index=dates)
+    ends = list(s.groupby([s.dt.year, s.dt.month]).max())
+    last = dates[-1]
+    if ends and ends[-1] == last:
+        nxt = last + timedelta(days=1)
+        while nxt.weekday() >= 5:
+            nxt += timedelta(days=1)
+        month_over = (today.year, today.month) != (last.year, last.month) or nxt.month != last.month
+        if not month_over:
+            ends = ends[:-1]
+    return ends
+
+
+def rank_on(C, V, ret1, d):
+    i = C.index.get_loc(d)
+    if i < LOOK:
+        return pd.DataFrame()
+    c = C.iloc[i]
+    turn = (C * V / 1e7).iloc[max(0, i - LIQWIN + 1):i + 1].mean()
+    old = C.iloc[i - LOOK]
+    r = C.iloc[i - SKIP] / old - 1
+    vol = ret1.iloc[i - VOLWIN + 1:i + 1].std()
+    elig = (turn >= MIN_CR) & (c >= MIN_PRICE) & old.notna() & c.notna() & (vol > 0)
+    sc = (r / vol)[elig].dropna()
+    sc = sc[sc > 0].sort_values(ascending=False)
+    out = pd.DataFrame({"score": sc, "ret": r[sc.index], "vol": vol[sc.index] * np.sqrt(252),
+                        "price": c[sc.index], "turn": turn[sc.index]})
+    out["rank"] = np.arange(1, len(out) + 1)
+    return out
+
+
+def row(sym, r, **extra):
+    d = {"s": sym, "rank": int(r["rank"]), "score": round(float(r["score"]), 1),
+         "ret": round(float(r["ret"]) * 100, 1), "vol": round(float(r["vol"]) * 100, 1),
+         "price": round(float(r["price"]), 2), "turn": round(float(r["turn"]), 1)}
+    d.update(extra)
+    return d
+
+
+def compute(C, V, today):
+    C, V = clean(C, V)
+    ret1 = C.pct_change(fill_method=None)
+    ends = month_ends(C.index, today)
+    if len(ends) < 2:
+        raise SystemExit("Not enough history for two month-ends")
+    lists = {}
+    for d in ends[-14:]:
+        rk = rank_on(C, V, ret1, d)
+        if len(rk):
+            lists[d] = rk
+    ds = sorted(lists)
+    cur_d, prev_d = ds[-1], ds[-2]
+    cur, prev = lists[cur_d], lists[prev_d]
+    cur_top, prev_top = list(cur.index[:TOP_N]), list(prev.index[:TOP_N])
+
+    portfolio = [row(s, cur.loc[s], status="HOLD" if s in prev_top else "NEW",
+                     prevRank=int(prev.loc[s, "rank"]) if s in prev.index else None) for s in cur_top]
+    sells = []
+    for s in prev_top:
+        if s not in cur_top:
+            sells.append({"s": s, "prevRank": int(prev.loc[s, "rank"]),
+                          "nowRank": int(cur.loc[s, "rank"]) if s in cur.index else None})
+
+    live_d = C.index[-1]
+    live = rank_on(C, V, ret1, live_d)
+    live_rows = [row(s, live.loc[s], inList=s in cur_top) for s in live.index[:30]]
+
+    # month-by-month record of the rules (close to close, equal weight, before costs)
+    hist = []
+    Cf = C.ffill()
+    for k, d in enumerate(ds):
+        top = list(lists[d].index[:TOP_N])
+        end = ds[k + 1] if k + 1 < len(ds) else live_d
+        ret = None
+        if end > d and top:
+            ret = round(float((Cf.loc[end, top] / Cf.loc[d, top] - 1).mean()) * 100, 1)
+        hist.append({"d": d.strftime("%Y-%m-%d"), "to": end.strftime("%Y-%m-%d"), "ret": ret,
+                     "partial": k + 1 == len(ds), "syms": top})
+    hist.reverse()
+
+    nxt = cur_d + timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+    return {
+        "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "dataDate": live_d.strftime("%Y-%m-%d"),
+        "rebalance": cur_d.strftime("%Y-%m-%d"),
+        "tradeOn": nxt.strftime("%Y-%m-%d"),
+        "previous": prev_d.strftime("%Y-%m-%d"),
+        "rules": {"topN": TOP_N, "minCr": MIN_CR, "minPrice": MIN_PRICE, "skip": SKIP,
+                  "lookback": LOOK, "volWindow": VOLWIN},
+        "universe": int(C.shape[1]),
+        "eligible": int(len(cur)),
+        "portfolio": portfolio,
+        "sells": sells,
+        "live": live_rows,
+        "history": hist[:12],
+    }
+
+
+def main():
+    syms = load_symbols()
+    limit = int(os.environ.get("LIMIT", "0"))
+    if limit:
+        syms = syms[:limit]
+    print(f"{len(syms)} symbols")
+    C, V = download(syms)
+    if C.empty:
+        print("No data downloaded", file=sys.stderr)
+        sys.exit(1)
+    today = datetime.now(timezone(timedelta(hours=5, minutes=30))).date()
+    out = compute(C, V, pd.Timestamp(today))
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    with open(OUT, "w", encoding="utf-8") as f:
+        json.dump(out, f, separators=(",", ":"))
+    print(f"Wrote {OUT}: rebalance {out['rebalance']}, {len(out['portfolio'])} stocks, "
+          f"{sum(p['status'] == 'NEW' for p in out['portfolio'])} new, {len(out['sells'])} sells")
+
+
+if __name__ == "__main__":
+    main()

@@ -9,6 +9,7 @@ on:
     paths:
       - ".github/workflows/momentum.yml"
       - "**/*momentum*.py"
+      - "**/*momentum*.txt"
   schedule:
     - cron: "15 11 * * 1-5"     # 16:45 IST
   workflow_dispatch: {}
@@ -33,7 +34,7 @@ jobs:
       - name: Rank momentum
         run: |
           # find the script wherever it was uploaded (any folder, any spacing of the name)
-          SCRIPT=$(git ls-files | grep -iE 'fetch[ _-]?momentum\.py$' | head -1)
+          SCRIPT=$(git ls-files | grep -iE 'fetch[ _-]?momentum\.(py|txt)$' | head -1)
           if [ -z "$SCRIPT" ]; then echo "fetch_momentum.py not found in the repo"; exit 1; fi
           echo "Using $SCRIPT"
           mkdir -p scripts
