@@ -16,17 +16,19 @@ const MODES = (process.env.MODES || "start,startlive,smc,tight,undercut,flag,man
 /* ── a fake page: element values come from index.html, everything else is a harmless no-op ── */
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
 const defaults = {};
-for (const m of html.matchAll(/<(input|select|textarea)\b([^>]*)>([\s\S]*?)(?=<\/select>|<\/textarea>|$)/g)) {
-  const tag = m[1], attrs = m[2], id = (attrs.match(/\bid="([^"]+)"/) || [])[1];
+// <input ...> elements (one tag each)
+for (const m of html.matchAll(/<input\b([^>]*)>/g)) {
+  const attrs = m[1], id = (attrs.match(/\bid="([^"]+)"/) || [])[1];
   if (!id) continue;
-  if (tag === "input") {
-    defaults[id] = { value: (attrs.match(/\bvalue="([^"]*)"/) || [, ""])[1], checked: /\bchecked\b/.test(attrs) };
-  } else if (tag === "select") {
-    const body = m[3].split("</select>")[0];
-    const opts = [...body.matchAll(/<option\b([^>]*)>([^<]*)/g)].map(o => ({ value: (o[1].match(/value="([^"]*)"/) || [, o[2]])[1], text: o[2], sel: /\bselected\b/.test(o[1]) }));
-    const s = opts.find(o => o.sel) || opts[0] || { value: "", text: "" };
-    defaults[id] = { value: s.value, options: opts };
-  }
+  defaults[id] = { value: (attrs.match(/\bvalue="([^"]*)"/) || [, ""])[1], checked: /\bchecked\b/.test(attrs) };
+}
+// <select ...> ... </select> with its options (the selected one, else the first)
+for (const m of html.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
+  const id = (m[1].match(/\bid="([^"]+)"/) || [])[1];
+  if (!id) continue;
+  const opts = [...m[2].matchAll(/<option\b([^>]*)>([^<]*)/g)].map(o => ({ value: (o[1].match(/value="([^"]*)"/) || [, o[2]])[1], text: o[2], sel: /\bselected\b/.test(o[1]) }));
+  const sel = opts.find(o => o.sel) || opts[0] || { value: "", text: "" };
+  defaults[id] = { value: sel.value, options: opts };
 }
 const hiddenIds = new Set();
 for (const m of html.matchAll(/<[a-z0-9]+\b([^>]*)>/gi)) {
@@ -114,6 +116,7 @@ safe("rvol", () => call("rvolSettings()"));
 safe("vcp", () => call("vcpSettings()"));
 safe("base", () => call("baseSettings()"));
 safe("canslim", () => ({ ...call("canslimSettings()"), mOnly: false }));
+for (const [k, v] of Object.entries(cfgs)) console.log(`settings ${k}: ${JSON.stringify(v).slice(0, 300)}`);
 
 const run = async () => {
   const t0 = Date.now();
