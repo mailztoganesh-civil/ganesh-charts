@@ -9,7 +9,7 @@ on:
       - ".github/workflows/breadth.yml"
       - "**/*breadth*.py"
   schedule:
-    - cron: "0 11 * * 1-5"      # 16:30 IST
+    - cron: "13 11 * * 1-5"     # 16:43 IST (off the hour: fewer GitHub delays)
   workflow_dispatch: {}
 
 permissions:

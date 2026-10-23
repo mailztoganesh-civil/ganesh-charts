@@ -2,7 +2,8 @@ name: Evening scans
 
 # Fully automatic:
 #  - runs by itself when these files are uploaded (push)
-#  - every weekday 17:30 IST, after the NSE close and the breadth / momentum jobs
+#  - every weekday 17:37 IST, with a backup run at 19:07 IST (GitHub often starts scheduled jobs
+#    late; a run skips itself if tonight's scan is already done)
 # Runs every scanner of the app on all NSE stocks and writes data/scans.json, which the app shows
 # as "Tonight's results".
 on:
@@ -11,7 +12,8 @@ on:
       - ".github/workflows/scans.yml"
       - "**/*run*scans*"
   schedule:
-    - cron: "0 12 * * 1-5"      # 17:30 IST
+    - cron: "7 12 * * 1-5"      # 17:37 IST
+    - cron: "37 13 * * 1-5"     # 19:07 IST backup
   workflow_dispatch: {}
 
 permissions:
@@ -30,7 +32,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Skip if tonight's scan is already done
+        id: fresh
+        run: |
+          # results written after today's NSE close (10:00 UTC) = already done
+          if [ -f data/scans.json ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            UPD=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('data/scans.json','utf8')).updated||'')}catch{console.log('')}")
+            TODAY=$(date -u +%Y-%m-%d)
+            if [ "${UPD:0:10}" = "$TODAY" ] && [ "${UPD:11:2}" -ge 10 ]; then echo "Already scanned at $UPD"; echo "skip=1" >> $GITHUB_OUTPUT; fi
+          fi
       - name: Run all scanners
+        if: steps.fresh.outputs.skip != '1'
         run: |
           # find the script wherever it was uploaded (any folder, .mjs / .js / .txt)
           SCRIPT=$(git ls-files | grep -iE 'run[ _-]?scans\.(mjs|js|txt)$' | head -1)
@@ -42,6 +54,7 @@ jobs:
         env:
           CONCURRENCY: "6"
       - name: Commit data/scans.json
+        if: steps.fresh.outputs.skip != '1'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
