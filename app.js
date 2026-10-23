@@ -3675,25 +3675,50 @@ function vcpUniverseLabels() {
   if (!vcpBusy) $("vScan").textContent = `Scan ${vcpUniverse().symbols.length} stocks`;
 }
 
-async function runVcp() {
+/* Scans survive the app being minimised: phones pause web pages in the background, so the scan
+ * waits while hidden, re-tries stocks whose download failed meanwhile, and saves its progress so
+ * it can be resumed even if the phone closed the app. */
+const SCAN_CKPT = "gc:scanCkpt";
+const waitVisible = () => document.hidden ? new Promise(res => {
+  const f = () => { if (!document.hidden) { document.removeEventListener("visibilitychange", f); res(); } };
+  document.addEventListener("visibilitychange", f);
+}) : null;
+function readCkpt() { try { const c = JSON.parse(localStorage.getItem(SCAN_CKPT) || "null"); return c && Array.isArray(c.symbols) ? c : null; } catch { return null; } }
+function showResume() {
+  const c = readCkpt(), b = $("vResume");
+  if (!b) return;
+  b.hidden = !c || vcpBusy;
+  if (c) b.textContent = `Resume last scan (${c.doneSyms.length} / ${c.symbols.length}, ${c.label || c.mode})`;
+}
+async function runVcp(resume) {
   if (vcpBusy) { vcpStop = true; return; }
-  const u = vcpUniverse();
+  resume = resume && Array.isArray(resume.symbols) ? resume : null;
+  const u = resume ? { name: resume.universe, symbols: resume.symbols } : vcpUniverse();
   if (!u.symbols.length) { toast("Choose stocks in Step 1 first"); return; }
-  if (u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. Keep the app open. Continue?`)) return;
-  const mode = $("vMode").value;
+  if (!resume && u.symbols.length > 600 && !confirm(`Scanning ${u.symbols.length} stocks downloads 2 years of data for each and may take a long time. If you leave the app, the scan pauses and continues when you come back. Continue?`)) return;
+  if (resume && $("vMode").value !== resume.mode) { $("vMode").value = resume.mode; vcpModeUI(); }
+  const mode = resume ? resume.mode : $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
   if (mode === "draw" && DRAW.length < 3) { toast("Draw a pattern (or pick a preset) first"); return; }
-  const cfg = mode === "draw" ? drawSettings() : mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = resume ? resume.cfg : mode === "draw" ? drawSettings() : mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
+  if ($("vResume")) $("vResume").hidden = true;
   $("vScan").textContent = "Stop scan";
   $("vProg").hidden = false;
-  const found = [];
-  let done = 0, i = 0, noData = 0;
+  const found = resume ? resume.found : [];
+  const doneSet = new Set(resume ? resume.doneSyms : []);
+  const queue = u.symbols.filter(x => !doneSet.has(x)), retry = [];
+  let done = doneSet.size, i = 0, noData = resume ? resume.noData || 0 : 0;
   const t0 = Date.now();
   let wakeLock = null;
   try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+  const onVis = async () => {
+    if (document.hidden) { saveCk(); return; }
+    try { if (!wakeLock || wakeLock.released) wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+  };
+  document.addEventListener("visibilitychange", onVis);
   const upd = () => {
     $("vBar").style.width = `${(done / u.symbols.length) * 100}%`;
     const rate = done ? (Date.now() - t0) / done : 0;
@@ -3703,7 +3728,9 @@ async function runVcp() {
   upd();
   let nifty = null;
   if (mode === "india" || mode === "vcp" || mode === "learned" || mode === "manas" || mode === "base" || mode === "canslim") { $("vProgText").textContent = "Loading Nifty for relative strength\u2026"; nifty = await fetchNiftyMap(); upd(); }
-  const allRs = [], tally = {};
+  const allRs = resume ? resume.allRs || [] : [], tally = resume ? resume.tally || {} : {};
+  const label = $("vMode").selectedOptions[0] ? $("vMode").selectedOptions[0].textContent.split(" (")[0].split(" \u2014")[0] : mode;
+  const saveCk = () => { try { localStorage.setItem(SCAN_CKPT, JSON.stringify({ mode, label, cfg, universe: u.name, symbols: u.symbols, doneSyms: [...doneSet], found, tally, allRs, noData, at: Date.now() })); } catch {} };
   let mkt = null;
   if (mode === "canslim") {
     await loadFundamentals(true);                    // updated daily by the GitHub Action
@@ -3720,10 +3747,14 @@ async function runVcp() {
       vcpUniverseLabels(); return;
     }
   } else $("vMarket").hidden = true;
-  await Promise.all(Array.from({ length: Math.min(3, u.symbols.length) }, async () => {
-    while (i < u.symbols.length && !vcpStop) {
-      const sym = u.symbols[i++];
+  const runQueue = (list, final) => Promise.all(Array.from({ length: Math.min(3, list.length) }, async () => {
+    while (i < list.length && !vcpStop) {
+      const w = waitVisible();
+      if (w) { $("vProgText").textContent = `Paused while the app is in the background \u00B7 ${done} / ${u.symbols.length} done \u2014 it continues when you come back.`; await w; upd(); }
+      const sym = list[i++];
+      const wasHidden = document.hidden;
       const c = await fetchDaily2y(sym);
+      if (!c.length && !final && (wasHidden || document.hidden || /network|timeout/.test(lastFetchError[sym] || ""))) { retry.push(sym); continue; }
       if (!c.length) noData++;
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
@@ -3733,10 +3764,15 @@ async function runVcp() {
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
       }
       if (r) { found.push({ symbol: sym, ...r }); if (c.length) livePrice[sym] = { close: r.close, date: r.date }; }
-      done++; upd();
+      doneSet.add(sym); done++; upd();
+      if (done % 10 === 0) saveCk();
       if (found.length && done % 10 === 0) { vcp = { results: sortVcp(mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : mode === "canslim" ? finalizeBase(found, allRs, { rsOn: true, rsMin: cfg.rsMin }) : found), scanned: done, universe: u.name, at: Date.now(), mode }; renderVcp(); }
     }
   }));
+  await runQueue(queue, false);
+  if (retry.length && !vcpStop) { i = 0; $("vProgText").textContent = `Re-trying ${retry.length} stocks that didn\u2019t download while the app was in the background\u2026`; await runQueue(retry.splice(0), true); }
+  document.removeEventListener("visibilitychange", onVis);
+  try { localStorage.removeItem(SCAN_CKPT); } catch {}
   const finalList = mode === "vcp" ? finalizeVcp(found, allRs, cfg) : mode === "base" ? finalizeBase(found, allRs, cfg) : mode === "canslim" ? finalizeBase(found, allRs, { rsOn: true, rsMin: cfg.rsMin }) : found;
   vcp = { results: sortVcp(finalList), scanned: done, universe: u.name, at: Date.now(), stopped: vcpStop, noData, mode, niftyOk: mode !== "india" || !!nifty, rsRanked: allRs.filter(x => x !== null).length >= 60 };
   try { localStorage.setItem(VCP_KEY, JSON.stringify(vcp)); } catch {}
@@ -4010,7 +4046,8 @@ function renderVcp() {
   }
 }
 
-$("vScan").onclick = runVcp;
+$("vScan").onclick = () => runVcp();
+if ($("vResume")) { $("vResume").onclick = () => { const c = readCkpt(); if (c) runVcp(c); }; showResume(); }
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
