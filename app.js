@@ -4108,7 +4108,65 @@ function vcpModeUI() {
     : "Minervini VCP: full Trend Template, RS rank 70+, a 30%+ run-up, then 2\u20136 pullbacks each shallower with higher lows, a tight final contraction on drying volume, price at the pivot. Each match is graded A / B / C.";
   try { localStorage.setItem("gc:vcpmode", $("vMode").value); } catch {}
 }
-$("vMode").onchange = vcpModeUI;
+$("vMode").onchange = () => { vcpModeUI(); eveUI(); };
+
+/* ───────── Tonight's results: scans run on GitHub every weekday evening (data/scans.json) ───────── */
+let EVE = null;
+async function loadEvening(force) {
+  try {
+    const res = await fetch(`data/scans.json${force ? `?t=${Date.now()}` : ""}`, { cache: "no-cache" });
+    EVE = res.ok ? await res.json() : null;
+  } catch { EVE = null; }
+  eveUI();
+}
+function eveKey() {
+  const m = $("vMode").value;
+  if (m === "start") return $("sWhen").value === "ready" ? "start" : "startlive";
+  return m;
+}
+function eveUI() {
+  const box = $("eveBox"); if (!box) return;
+  const k = eveKey(), e = EVE && EVE.modes && EVE.modes[k];
+  if (!e) {
+    box.hidden = false;
+    $("eveText").textContent = EVE ? "This scanner isn\u2019t part of the evening scan (it needs your own drawing / examples) \u2014 use Scan below." : "Evening scan results appear here once the \u201CEvening scans\u201D action has run on GitHub (every weekday about 5:30 pm IST).";
+    $("eveShow").hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const upd = new Date(EVE.updated);
+  $("eveText").textContent = `Scanned on GitHub: all ${EVE.scanned.toLocaleString("en-IN")} NSE stocks \u00B7 prices of ${fmtD(EVE.dataDate)} \u00B7 ${upd.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}`;
+  $("eveShow").hidden = false;
+  $("eveShow").textContent = `Show tonight\u2019s results \u2014 ${e.results.length} found`;
+}
+function showEvening() {
+  const k = eveKey(), e = EVE && EVE.modes && EVE.modes[k];
+  if (!e) return;
+  const mode = $("vMode").value;
+  vcp = { results: e.results, scanned: EVE.scanned, universe: `All NSE stocks (GitHub evening scan, ${fmtD(EVE.dataDate)})`, at: new Date(EVE.updated).getTime(), noData: EVE.noData, mode, evening: true };
+  for (const r of vcp.results) livePrice[r.symbol] = livePrice[r.symbol] || { close: r.close, date: r.date };
+  try { localStorage.setItem(VCP_KEY, JSON.stringify(vcp)); } catch {}
+  $("vProg").hidden = false;
+  $("vBar").style.width = "100%";
+  $("vProgText").textContent = `Tonight\u2019s results: ${EVE.scanned} scanned on GitHub, ${e.results.length} found (default settings).`;
+  const RULES = { flag: typeof FLAG_RULES !== "undefined" ? FLAG_RULES : {}, undercut: typeof UC_RULES !== "undefined" ? UC_RULES : {}, tight: typeof TIGHT_RULES !== "undefined" ? TIGHT_RULES : {}, vcp: typeof VCP_RULES !== "undefined" ? VCP_RULES : {} }[mode];
+  const items = e.tally ? Object.entries(e.tally).filter(([x]) => x !== "ok").sort((a, b) => b[1] - a[1]) : [];
+  $("vWhy").hidden = !items.length;
+  $("vWhyList").innerHTML = "";
+  for (const [x, v] of items) {
+    const li = document.createElement("li");
+    li.innerHTML = "<span></span><b></b>";
+    li.querySelector("span").textContent = (RULES && RULES[x]) || x;
+    li.querySelector("b").textContent = v;
+    $("vWhyList").appendChild(li);
+  }
+  renderVcp();
+  $("vResults").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("eveShow").onclick = showEvening;
+$("eveRefresh").onclick = () => loadEvening(true);
+if ($("sWhen")) $("sWhen").addEventListener("change", eveUI);
+loadEvening();
 try { $("lExamples").value = localStorage.getItem("gc:learnText") || MANAS_EXAMPLES; } catch { $("lExamples").value = MANAS_EXAMPLES; }
 $("lLearn").onclick = learnFromExamples;
 $("lVcps").onclick = () => { $("lExamples").value = VCPS_EXAMPLES; };

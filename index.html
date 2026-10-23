@@ -281,6 +281,8 @@
   .dtools { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin: 8px 0; }
   #dPresets { display: flex; flex-wrap: wrap; gap: 6px; }
   #dPresets button { font: 13px -apple-system, Helvetica, Arial, sans-serif; border: 1px solid var(--line); background: #fff; border-radius: 14px; padding: 5px 10px; cursor: pointer; }
+  .evebox { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: #F7F9FF; }
+  .evebox .vbtn { margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -539,6 +541,12 @@
         <label><input type="checkbox" id="vNear" checked> Also show near misses (fail 1 rule)</label>
       </div>
     </details>
+    <div id="eveBox" class="evebox" hidden>
+      <div class="brhead"><b>Tonight’s results</b><button type="button" class="link2" id="eveRefresh">Refresh</button></div>
+      <p class="small" id="eveText"></p>
+      <button type="button" class="vbtn" id="eveShow" hidden></button>
+      <p class="small">Or scan now with your own settings / list:</p>
+    </div>
     <button type="button" id="vScan" class="vbtn">Scan for VCP</button>
     <button type="button" class="wbtn" id="vResume" hidden style="width:100%;margin-top:8px;padding:12px"></button>
     <div id="vProg" hidden>
@@ -662,7 +670,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 60 · scans pause &amp; resume in background</p>
+  <p class="small" style="text-align:center">Version 61 · tonight’s results from GitHub</p>
 </main>
 <div id="chartWin" hidden role="dialog" aria-modal="true" aria-label="Watchlist chart">
   <div class="cwbar">
@@ -730,8 +738,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=60"></script>
-<script src="app.js?v=60"></script>
+<script src="symbols.js?v=61"></script>
+<script src="app.js?v=61"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
