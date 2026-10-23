@@ -11,7 +11,7 @@ const ROOT = process.env.GITHUB_WORKSPACE || process.cwd();
 const OUT = path.join(ROOT, "data", "scans.json");
 const LIMIT = parseInt(process.env.LIMIT || "0", 10);
 const CONC = parseInt(process.env.CONCURRENCY || "6", 10);
-const MODES = (process.env.MODES || "start,startlive,tight,undercut,flag,manas,india,rvol,vcp,base,canslim").split(",");
+const MODES = (process.env.MODES || "start,startlive,smc,tight,undercut,flag,manas,india,rvol,vcp,base,canslim").split(",");
 
 /* ── a fake page: element values come from index.html, everything else is a harmless no-op ── */
 const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
@@ -104,6 +104,7 @@ const cfgs = {};
 const safe = (k, f) => { try { cfgs[k] = f(); } catch (e) { console.error(`settings ${k}:`, e.message); } };
 safe("start", () => ({ ...call("startSettings()"), when: "ready" }));
 safe("startlive", () => ({ ...call("startSettings()"), when: "3" }));
+safe("smc", () => ({ ...call("smcSettings()"), show: "all" }));
 safe("tight", () => ({ ...call("tightSettings()"), minScore: 70 }));
 safe("undercut", () => ({ ...call("ucSettings()"), show: "all" }));
 safe("flag", () => call("flagSettings()"));
@@ -125,13 +126,13 @@ const run = async () => {
   console.log(`Fundamentals: ${app("FUND") ? "ok" : "not available"}`);
   const fn = {
     start: c => call("analyseStart")(c, cfgs.start), startlive: c => call("analyseStart")(c, cfgs.startlive),
-    tight: c => call("analyseTight")(c, cfgs.tight), undercut: c => call("analyseUndercut")(c, cfgs.undercut),
+    smc: c => call("analyseSmc")(c, cfgs.smc), tight: c => call("analyseTight")(c, cfgs.tight), undercut: c => call("analyseUndercut")(c, cfgs.undercut),
     flag: c => call("analyseFlag")(c, cfgs.flag), manas: c => call("analyseManas")(c, nifty, cfgs.manas),
     india: c => call("analyseIndia")(c, nifty, cfgs.india), rvol: c => call("analyseRvol")(c, cfgs.rvol),
     vcp: c => call("analyseVcp")(c, cfgs.vcp, nifty), base: c => call("analyseBase")(c, cfgs.base, nifty),
     canslim: (c, sym) => { cfgs.canslim._sym = sym; return call("analyseCanslim")(c, cfgs.canslim, nifty); },
   };
-  const tallied = new Set(["vcp", "flag", "undercut", "tight"]);
+  const tallied = new Set(["vcp", "flag", "undercut", "tight", "smc"]);
   const res = {}, tally = {}, errs = {};
   for (const m of MODES) { res[m] = []; tally[m] = {}; }
   const allRs = [];

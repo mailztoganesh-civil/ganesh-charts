@@ -658,6 +658,149 @@ function analyseManas(c, niftyMap, cfg) {
   };
 }
 
+/* ───────── Smart Money Concepts: bullish Change of Character + gap (FVG) / order block buy ─────────
+ * Structure from swing points (3 bars each side). After a downtrend (lower highs) price makes a
+ * higher low, then closes above the last lower high = bullish CHoCH. The impulse leaves a gap
+ * (fair value gap: candle 3's low above candle 1's high) and an order block (last red candle at the
+ * low). Don't buy the break: buy when price comes back into the gap. Stop under the higher low,
+ * target 2.5R. Stages: Waiting (not back yet) · In the gap today · In trade (bought, running). */
+const SMC_RULES = {
+  data: "Not enough history", liq: "Price / liquidity too low", nochoch: "No bullish Change of Character recently",
+  nogap: "CHoCH without a gap (FVG)", stopped: "Fell below the higher low (setup failed)", target: "Already reached the 2.5R target",
+  risk: "Stop too far (risk too big)", trend: "Below the 200-day average", old: "Bought too long ago", stage: "Different stage than chosen in Show",
+};
+function smcSettings() {
+  return {
+    show: $("smShow").value,
+    look: clampInt($("smLook").value, 5, 120, 30),
+    needHL: $("smHL").checked,
+    gapOnly: $("smGap").checked,
+    above200: $("smTrend").checked,
+    maxRisk: Math.max(1, parseFloat($("smRisk").value) || 12),
+    rr: Math.max(1, parseFloat($("smRR").value) || 2.5),
+    turn: Math.max(0, parseFloat($("smTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("smMinPrice").value) || 0),
+  };
+}
+function smcSwings(H, L, from, to, w = 3) {
+  const hs = [], ls = [];
+  for (let i = Math.max(w, from); i <= to - w; i++) {
+    let isH = true, isL = true;
+    for (let j = i - w; j <= i + w; j++) {
+      if (j === i) continue;
+      if (j < i ? H[j] >= H[i] : H[j] > H[i]) isH = false;
+      if (j < i ? L[j] <= L[i] : L[j] < L[i]) isL = false;
+    }
+    if (isH) hs.push({ i, p: H[i] });
+    if (isL) ls.push({ i, p: L[i] });
+  }
+  return { hs, ls };
+}
+function analyseSmc(c, cfg) {
+  const fail = f => ({ fails: [f] });
+  const n = c.length;
+  if (n < 120) return fail("data");
+  const O = c.map(x => x.open), H = c.map(x => x.high), L = c.map(x => x.low), C = c.map(x => x.close), V = c.map(x => x.volume);
+  const k = n - 1, close = C[k];
+  const turn = close * smaAt(V, k, 20) / 1e7;
+  if (close < cfg.minPrice || turn < cfg.turn) return fail("liq");
+  const from = Math.max(0, k - cfg.look - 120);
+  const { hs, ls } = smcSwings(H, L, from, k);
+  // latest bullish CHoCH within `look` bars: first close above a lower high, after a higher low
+  let ch = null;
+  for (let b = k; b >= k - cfg.look + 1 && !ch; b--) {
+    const conf = hs.filter(s => s.i + 3 <= b - 1);
+    if (conf.length < 3) continue;
+    const sh1 = conf[conf.length - 1], sh0 = conf[conf.length - 2], shm = conf[conf.length - 3];
+    if (!(shm.p > sh0.p && sh0.p > sh1.p)) continue;                  // two lower highs in a row = a real downtrend
+    if (!(C[b] > sh1.p)) continue;
+    let first = true; for (let j = sh1.i + 1; j < b; j++) if (C[j] > sh1.p) { first = false; break; }
+    if (!first) continue;
+    let hlI = sh1.i; for (let j = sh1.i; j < b; j++) if (L[j] < L[hlI]) hlI = j;   // low between LH and break
+    const before = ls.filter(s => s.i < sh1.i);
+    const prevLow = before.length ? before[before.length - 1] : null;
+    if (cfg.needHL && !(prevLow && L[hlI] > prevLow.p)) continue;      // higher low (failed to make a new low)
+    ch = { b, sh1, sh0, hlI, prevLow };
+  }
+  if (!ch) return fail("nochoch");
+  const { b, sh1, sh0, hlI, prevLow } = ch;
+  // gap (fair value gap) in the impulse: candle j+1's low above candle j-1's high; nearest the break
+  let gap = null;
+  for (let j = Math.min(b + 1, k - 1); j >= hlI + 1; j--) {
+    if (L[j + 1] > H[j - 1]) { gap = { lo: H[j - 1], hi: L[j + 1], i: j - 1 }; break; }
+  }
+  // order block: last red candle at the low before the move up
+  let ob = null;
+  for (let j = b - 1; j >= Math.max(0, hlI - 3); j--) if (C[j] < O[j] && L[j] <= L[hlI] * 1.04) { ob = { lo: L[j], hi: Math.max(O[j], C[j]), i: j }; break; }
+  if (!gap && cfg.gapOnly) return fail("nogap");
+  const zone = gap || ob || { lo: L[hlI], hi: Math.max(O[hlI], C[hlI]), i: hlI };
+  const zType = gap ? "Gap (FVG)" : "Order block";
+  const sl = L[hlI] * 0.995;
+  const entry = zone.hi;
+  if (!(entry > sl)) return fail("risk");
+  const riskPct = (entry - sl) / entry * 100;
+  if (riskPct > cfg.maxRisk) return fail("risk");
+  const target = entry + cfg.rr * (entry - sl);
+  const s200 = smaAt(C, k, 200);
+  if (cfg.above200 && !isNaN(s200) && close < s200) return fail("trend");
+  // what happened after the break
+  let touch = -1;
+  const after = gap ? Math.max(b, gap.i + 2) : b;            // the gap only exists once its 3rd candle has closed
+  for (let j = b + 1; j <= k; j++) {
+    if (L[j] < sl) return fail("stopped");
+    if (touch < 0 && j > after && L[j] < entry) touch = j;
+    if (touch >= 0 && j > touch && H[j] >= target) return fail("target");
+  }
+  let status;
+  if (touch < 0) status = "waiting";
+  else if (touch === k || (L[k] <= entry && C[k] >= zone.lo)) status = "inzone";
+  else {
+    if (k - touch > 10) return fail("old");
+    status = "intrade";
+  }
+  if (cfg.show && cfg.show !== "all" && cfg.show !== status) return fail("stage");
+  const r = (close - entry) / (entry - sl);
+  const dist = (close / entry - 1) * 100;
+  const green = C[k] > O[k];
+  // structure labels for the chart: recent swings named against the previous swing of the same kind
+  const labels = [];
+  const lastH = hs.filter(s => s.i >= k - 100).slice(-5), lastL = ls.filter(s => s.i >= k - 100).slice(-5);
+  lastH.forEach((s, x) => { if (x) labels.push({ date: ymd(c[s.i].date), price: s.p, text: s.p > lastH[x - 1].p ? "HH" : "LH", above: true }); });
+  lastL.forEach((s, x) => { if (x) labels.push({ date: ymd(c[s.i].date), price: s.p, text: s.p > lastL[x - 1].p ? "HL" : "LL", above: false }); });
+  labels.push({ date: ymd(c[b].date), price: sh1.p, text: "CHoCH", above: true, strong: true });
+  const tags = [{ waiting: "CHoCH · wait for pullback", inzone: green ? "In the gap · bouncing" : "In the gap today", intrade: `Bought · ${r >= 0 ? "+" : ""}${r.toFixed(1)}R` }[status],
+    `CHoCH ${k - b === 0 ? "today" : `${k - b}d ago`}`, zType, `Risk ${riskPct.toFixed(1)}%`,
+    ...(isNaN(s200) ? [] : [close > s200 ? "Above 200-day" : "Below 200-day"]), ...(prevLow ? [`HL +${((L[hlI] / prevLow.p - 1) * 100).toFixed(1)}%`] : [])];
+  return {
+    fails: [], mode: "smc", status, close, date: ymd(c[k].date), entry, sl, target, risk: Math.round(riskPct * 10) / 10, r: Math.round(r * 10) / 10,
+    rr: cfg.rr, zoneLo: zone.lo, zoneHi: zone.hi, zType, zoneDate: ymd(c[zone.i].date), gap: gap ? { lo: gap.lo, hi: gap.hi, date: ymd(c[gap.i].date) } : null,
+    ob: ob ? { lo: ob.lo, hi: ob.hi, date: ymd(c[ob.i].date) } : null, chochDate: ymd(c[b].date), chochLevel: sh1.p, lhPrev: sh0.p,
+    hl: L[hlI], hlDate: ymd(c[hlI].date), dist: Math.round(dist * 10) / 10, turn: Math.round(turn * 10) / 10, labels, tags,
+  };
+}
+/* zones (gap / order block boxes) and structure labels on the daily chart */
+function drawSmcMarks(ctx, mark, dc, X, Y, xRight, yTop, yBot) {
+  if (!mark) return;
+  ctx.save();
+  for (const z of mark.zones || []) {
+    let i0 = dc.findIndex(x => ymd(x.date) >= z.from); if (i0 < 0) continue;
+    const y1 = Math.max(yTop, Y(z.hi)), y2 = Math.min(yBot, Y(z.lo));
+    if (y2 <= yTop || y1 >= yBot) continue;
+    ctx.fillStyle = z.color; ctx.fillRect(X(i0) - 3, y1, xRight - X(i0) + 3, Math.max(2, y2 - y1));
+    ctx.fillStyle = z.text || "#555"; ctx.font = `bold 9px ${FONT}`; ctx.textAlign = "right"; ctx.textBaseline = "top";
+    ctx.fillText(z.label, xRight - 4, y1 + 2);
+  }
+  for (const l of mark.labels || []) {
+    const i = dc.findIndex(x => ymd(x.date) === l.date); if (i < 0) continue;
+    const y = Y(l.price) + (l.above ? -8 : 9);
+    if (y < yTop || y > yBot) continue;
+    ctx.font = `${l.strong ? "bold " : ""}9px ${FONT}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = l.strong ? "rgb(109,40,217)" : "#444";
+    ctx.fillText(l.text, X(i), y);
+  }
+  ctx.restore();
+}
+
 /* ───────── Draw a pattern (like Chartink's pattern search) ─────────
  * Draw a price shape with your finger; each stock's last N closes are scaled to the same box and
  * compared with the drawing. Match % = half shape correlation, half closeness of the two lines. */
@@ -1774,6 +1917,7 @@ function drawMSChart(canvas, symbol, interval, candles, bars, mark) {
       if (di >= 0) drawEntryTri(ctx, X(di), Math.min(Y(dc[di].low) + 4, PB - 8), t === mark.triMain ? 5 : 3.5);
     }
   }
+  if (mark && (mark.zones || mark.labels) && interval !== "W") drawSmcMarks(ctx, mark, dc, X, Y, R, T, PB);
 
   // level lines from scans / watchlists: dashed line across the chart; the value goes on the
   // price axis and the name in the legend row, so nothing is written over the bars
@@ -2020,6 +2164,7 @@ function drawChart(canvas, symbol, interval, candles, bars, mark) {
       if (di >= 0) drawEntryTri(ctx, X(di), Math.min(Y(dc[di].low) + 4, topPad + chartH - 10), t === mark.triMain ? 5 : 3.5);
     }
   }
+  if (mark && (mark.zones || mark.labels) && interval !== "W") drawSmcMarks(ctx, mark, dc, X, Y, CW - rightPad, topPad, topPad + chartH);
   // Watchlist entry: dashed line at the added price + star on the added candle
   if (mark && mark.price) {
     if (mark.price >= minP && mark.price <= maxP) {
@@ -2941,7 +3086,24 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "draw") {
+  if (r.mode === "smc") {
+    add("Stage", { waiting: "CHoCH done \u00B7 waiting for the pullback into the gap", inzone: "In the buy zone today", intrade: `Bought in the zone \u00B7 now ${r.r >= 0 ? "+" : ""}${r.r}R` }[r.status], r.status === "inzone" ? "up" : "");
+    add(`Buy zone (${r.zType})`, `\u20B9${r.zoneLo.toFixed(2)} \u2013 \u20B9${r.zoneHi.toFixed(2)}`, "up");
+    add("Stop", `\u20B9${r.sl.toFixed(2)} (under the higher low)`);
+    add("Target", `\u20B9${r.target.toFixed(2)} (${r.rr} \u00D7 risk)`);
+    add("Risk", `${r.risk}% from the top of the zone`, r.risk > 8 ? "down" : "");
+    add("Change of Character", `${fmtD(r.chochDate)} \u00B7 closed above the lower high \u20B9${r.chochLevel.toFixed(2)}`);
+    add("Higher low", `\u20B9${r.hl.toFixed(2)} on ${fmtD(r.hlDate)}`);
+    if (r.ob && r.zType !== "Order block") add("Order block", `\u20B9${r.ob.lo.toFixed(2)} \u2013 \u20B9${r.ob.hi.toFixed(2)}`);
+    add("Close", `\u20B9${r.close.toFixed(2)}${r.status === "waiting" ? ` (${r.dist}% above the zone)` : ""}`);
+    $("cwNote").textContent = r.status === "waiting"
+      ? "Trend changed (CHoCH). Don\u2019t buy the break: wait for price to come back into the shaded gap. Stop under the higher low, target 2.5R."
+      : r.status === "inzone" ? "Price is back in the gap: this is the buy zone. Best on a green candle holding the zone; stop under the higher low."
+      : "Already bought in the zone. Hold for the 2.5R target; exit if it closes under the higher low.";
+    mark = { lines: [{ price: r.entry, label: "Buy zone top", color: "rgb(18,140,51)" }, { price: r.sl, label: "Stop", color: "rgb(217,26,26)" }, { price: r.target, label: `Target ${r.rr}R`, color: "rgb(37,99,235)" }, { price: r.chochLevel, label: "CHoCH level", color: "rgb(109,40,217)" }],
+      zones: [...(r.gap ? [{ from: r.gap.date, lo: r.gap.lo, hi: r.gap.hi, color: "rgba(239,68,68,0.16)", text: "rgb(185,28,28)", label: "GAP" }] : []), ...(r.ob ? [{ from: r.ob.date, lo: r.ob.lo, hi: r.ob.hi, color: "rgba(59,130,246,0.16)", text: "rgb(29,78,216)", label: "ORDER BLOCK" }] : [])],
+      labels: r.labels };
+  } else if (r.mode === "draw") {
     add("Match", `${r.score}%`, r.score >= 90 ? "up" : "");
     add("Compared", `last ${r.win} trading days`);
     add("Move over the period", `${r.chg >= 0 ? "+" : ""}${r.chg}%`, r.chg >= 0 ? "up" : "down");
@@ -3718,7 +3880,7 @@ async function runVcp(resume) {
   const mode = resume ? resume.mode : $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
   if (mode === "draw" && DRAW.length < 3) { toast("Draw a pattern (or pick a preset) first"); return; }
-  const cfg = resume ? resume.cfg : mode === "draw" ? drawSettings() : mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = resume ? resume.cfg : mode === "smc" ? smcSettings() : mode === "draw" ? drawSettings() : mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -3776,8 +3938,8 @@ async function runVcp(resume) {
       if (!c.length) noData++;
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
-      let r = c.length ? (mode === "draw" ? analyseDraw(c, cfg) : mode === "tight" ? analyseTight(c, cfg) : mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
-      if ((mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight") && r) {
+      let r = c.length ? (mode === "smc" ? analyseSmc(c, cfg) : mode === "draw" ? analyseDraw(c, cfg) : mode === "tight" ? analyseTight(c, cfg) : mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      if ((mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight" || mode === "smc") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
       }
@@ -3797,8 +3959,8 @@ async function runVcp(resume) {
   try { wakeLock?.release(); } catch {}
   vcpBusy = false;
   $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${(mode === "vcp" || mode === "base" || mode === "canslim") && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
-  if (mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight") {
-    const RULES = mode === "flag" ? FLAG_RULES : mode === "undercut" ? UC_RULES : mode === "tight" ? TIGHT_RULES : VCP_RULES;
+  if (mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight" || mode === "smc") {
+    const RULES = mode === "flag" ? FLAG_RULES : mode === "undercut" ? UC_RULES : mode === "tight" ? TIGHT_RULES : mode === "smc" ? SMC_RULES : VCP_RULES;
     const items = Object.entries(tally).filter(([k]) => k !== "ok").sort((a, b) => b[1] - a[1]);
     $("vWhy").hidden = !items.length;
     $("vWhyList").innerHTML = "";
@@ -3815,7 +3977,10 @@ async function runVcp(resume) {
 }
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
 const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3, base: 4 };
-const sortVcp = arr => [...arr].sort((a, b) => a.mode === "draw"
+const SMC_ORDER = { inzone: 0, waiting: 1, intrade: 2 };
+const sortVcp = arr => [...arr].sort((a, b) => a.mode === "smc"
+  ? (SMC_ORDER[a.status] - SMC_ORDER[b.status]) || (a.status === "waiting" ? a.dist - b.dist : a.risk - b.risk)
+  : a.mode === "draw"
   ? (b.score - a.score)
   : a.mode === "tight"
   ? (b.score - a.score) || ((a.status === "breakout" ? 0 : 1) - (b.status === "breakout" ? 0 : 1)) || (a.tightPct - b.tightPct)
@@ -3836,7 +4001,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "draw"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "draw" ? "Drawn pattern" : vcp.mode === "tight" ? "Tight near highs" : vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "smc" ? "Smart Money buys" : vcp.mode === "draw" ? "Drawn pattern" : vcp.mode === "tight" ? "Tight near highs" : vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -3908,6 +4073,18 @@ function scanRowEl(r) {
     row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
     row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
     if (r.day1) row.querySelector(".vdist").classList.add("up");
+    return row;
+  }
+  if (r.mode === "smc") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "inzone" ? " ib" : r.status === "waiting" ? " pd" : "") : t.startsWith("Below") ? " miss" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `Buy \u20B9${r.zoneLo.toFixed(2)}\u2013${r.zoneHi.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 target \u20B9${r.target.toFixed(2)} (${r.rr}R)`;
+    const dd = row.querySelector(".vdist");
+    dd.textContent = r.status === "waiting" ? `${r.dist.toFixed(1)}% above` : r.status === "inzone" ? "In zone" : `${r.r >= 0 ? "+" : ""}${r.r}R`;
+    if (r.status !== "waiting") dd.classList.add(r.r >= 0 || r.status === "inzone" ? "up" : "down");
     return row;
   }
   if (r.mode === "draw") {
@@ -4043,7 +4220,13 @@ if ($("vResume")) {
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut"; $("setTight").hidden = m !== "tight"; $("drawBox").hidden = m !== "draw";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut"; $("setTight").hidden = m !== "tight"; $("drawBox").hidden = m !== "draw"; $("setSmc").hidden = m !== "smc";
+  if (m === "smc") {
+    $("vDesc").textContent = "Smart Money Concepts, buy side: after a downtrend (lower highs) the stock makes a higher low, then closes above the last lower high \u2014 a bullish Change of Character (CHoCH). Don\u2019t buy the break: buy when price comes back into the gap (fair value gap) or order block the move left behind. Stop under the higher low, target 2.5R. The chart shades the gap and order block and labels HH / HL / LH / LL.";
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    if (typeof eveUI === "function") eveUI();
+    return;
+  }
   if (m === "draw") {
     $("vDesc").textContent = "Draw a price shape (or pick a preset). Every stock\u2019s last N days of closes are scaled to the same box and compared with your drawing; results are ranked by match %. Like Chartink\u2019s pattern search.";
     drawPad();
@@ -4165,7 +4348,7 @@ function showEvening() {
   $("vProg").hidden = false;
   $("vBar").style.width = "100%";
   $("vProgText").textContent = `Tonight\u2019s results: ${EVE.scanned} scanned on GitHub, ${e.results.length} found (default settings).`;
-  const RULES = { flag: typeof FLAG_RULES !== "undefined" ? FLAG_RULES : {}, undercut: typeof UC_RULES !== "undefined" ? UC_RULES : {}, tight: typeof TIGHT_RULES !== "undefined" ? TIGHT_RULES : {}, vcp: typeof VCP_RULES !== "undefined" ? VCP_RULES : {} }[mode];
+  const RULES = { smc: typeof SMC_RULES !== "undefined" ? SMC_RULES : {}, flag: typeof FLAG_RULES !== "undefined" ? FLAG_RULES : {}, undercut: typeof UC_RULES !== "undefined" ? UC_RULES : {}, tight: typeof TIGHT_RULES !== "undefined" ? TIGHT_RULES : {}, vcp: typeof VCP_RULES !== "undefined" ? VCP_RULES : {} }[mode];
   const items = e.tally ? Object.entries(e.tally).filter(([x]) => x !== "ok").sort((a, b) => b[1] - a[1]) : [];
   $("vWhy").hidden = !items.length;
   $("vWhyList").innerHTML = "";
@@ -4205,7 +4388,9 @@ $("vPdf").onclick = () => {
   generate(syms, { notes });
 };
 function scanItem(r) {
-        const note = r.mode === "draw"
+        const note = r.mode === "smc"
+          ? `Smart Money (${r.status}): buy \u20B9${r.zoneLo.toFixed(2)}-${r.zoneHi.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, target \u20B9${r.target.toFixed(2)}`
+          : r.mode === "draw"
           ? `Drawn pattern: match ${r.score}% over the last ${r.win} days`
           : r.mode === "tight"
           ? `Match ${r.score}% \u00B7 ${r.status === "breakout" ? "Volume breakout" : "Tight near highs"}: ${r.status === "ready" ? "buy above" : "entry"} \u20B9${r.trigger.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, line \u20B9${r.line.toFixed(2)}, ${r.days || ""}tight ${r.tightPct}%`
@@ -4230,7 +4415,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "tight" ? { entry: r.trigger, sl: r.sl } : r.mode === "undercut" ? { entry: r.entry, sl: r.sl } : r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "smc" ? { entry: r.entry, sl: r.sl } : r.mode === "tight" ? { entry: r.trigger, sl: r.sl } : r.mode === "undercut" ? { entry: r.entry, sl: r.sl } : r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {
@@ -4249,7 +4434,7 @@ $("vWatch").onclick = () => {
 };
 /* ── Scanner watchlists: one list per scanner style, items keep the full scan result ── */
 const SCAN_LIST_LABELS = { start: "Manas \u00B7 tomorrow\u2019s watchlist", startlive: "Manas \u00B7 entries (3 days)", tight: "Tight near highs", undercut: "Undercut & rally",
-  flag: "Daily flag", manas: "Manas setups", india: "India momentum", rvol: "RVOL breakout", vcp: "VCP", base: "Base patterns", canslim: "CAN SLIM", draw: "Draw a pattern", learned: "Learned" };
+  smc: "Smart Money (CHoCH + gap)", flag: "Daily flag", manas: "Manas setups", india: "India momentum", rvol: "RVOL breakout", vcp: "VCP", base: "Base patterns", canslim: "CAN SLIM", draw: "Draw a pattern", learned: "Learned" };
 function scanLabel(mode) {
   if (SCAN_LIST_LABELS[mode]) return SCAN_LIST_LABELS[mode];
   const o = [...$("vMode").options].find(x => x.value === mode);
