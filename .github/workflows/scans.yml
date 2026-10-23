@@ -1,0 +1,51 @@
+name: Evening scans
+
+# Fully automatic:
+#  - runs by itself when these files are uploaded (push)
+#  - every weekday 17:30 IST, after the NSE close and the breadth / momentum jobs
+# Runs every scanner of the app on all NSE stocks and writes data/scans.json, which the app shows
+# as "Tonight's results".
+on:
+  push:
+    paths:
+      - ".github/workflows/scans.yml"
+      - "**/*run*scans*"
+  schedule:
+    - cron: "0 12 * * 1-5"      # 17:30 IST
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scans
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run all scanners
+        run: |
+          # find the script wherever it was uploaded (any folder, .mjs / .js / .txt)
+          SCRIPT=$(git ls-files | grep -iE 'run[ _-]?scans\.(mjs|js|txt)$' | head -1)
+          if [ -z "$SCRIPT" ]; then echo "run_scans.mjs not found in the repo"; exit 1; fi
+          echo "Using $SCRIPT"
+          mkdir -p scripts
+          cp "$SCRIPT" scripts/run_scans_job.mjs
+          node scripts/run_scans_job.mjs
+        env:
+          CONCURRENCY: "6"
+      - name: Commit data/scans.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/scans.json
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Update evening scans $(date -u +%Y-%m-%d)"
+          for i in 1 2 3; do git pull --rebase && git push && break; sleep 10; done
