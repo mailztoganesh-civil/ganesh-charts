@@ -4110,6 +4110,30 @@ async function loadEvening(force) {
     EVE = res.ok ? await res.json() : null;
   } catch { EVE = null; }
   eveUI();
+  autoSaveEvening();
+}
+/* Auto-save: each new evening scan replaces the "Scan · …" watchlists (once per scan, on any device) */
+const EVE_AUTO = "gc:eveAuto", EVE_SAVED = "gc:eveSaved";
+function eveAutoOn() { try { return localStorage.getItem(EVE_AUTO) !== "0"; } catch { return true; } }
+function autoSaveEvening() {
+  if (!EVE || !EVE.modes || !eveAutoOn()) return;
+  let last = ""; try { last = localStorage.getItem(EVE_SAVED) || ""; } catch {}
+  if (last === EVE.updated) return;
+  const at = new Date(EVE.updated).getTime();
+  // skip if a synced device already saved this scan (lists carry the scan time)
+  const already = WL.lists.some(l => l.scanMode && l.items.some(i => i.scanAt === at));
+  let n = 0, total = 0;
+  if (!already) {
+    for (const [key, e] of Object.entries(EVE.modes)) {
+      if (!e || !Array.isArray(e.results)) continue;
+      if (!e.results.length && !scanListFor(key, false)) continue;   // don't create empty lists
+      saveScanResults(key, e.results, at, true);
+      n++; total += e.results.length;
+    }
+    if (n) wlSave();
+  }
+  try { localStorage.setItem(EVE_SAVED, EVE.updated); } catch {}
+  if (n) toast(`Tonight\u2019s results saved to ${n} scanner watchlist${n > 1 ? "s" : ""} (${total} stocks)`);
 }
 function eveKey() {
   const m = $("vMode").value;
@@ -4135,7 +4159,7 @@ function showEvening() {
   const k = eveKey(), e = EVE && EVE.modes && EVE.modes[k];
   if (!e) return;
   const mode = $("vMode").value;
-  vcp = { results: e.results, scanned: EVE.scanned, universe: `All NSE stocks (GitHub evening scan, ${fmtD(EVE.dataDate)})`, at: new Date(EVE.updated).getTime(), noData: EVE.noData, mode, evening: true };
+  vcp = { results: e.results, scanned: EVE.scanned, universe: `All NSE stocks (GitHub evening scan, ${fmtD(EVE.dataDate)})`, at: new Date(EVE.updated).getTime(), noData: EVE.noData, mode, evening: true, eveKey: k };
   for (const r of vcp.results) livePrice[r.symbol] = livePrice[r.symbol] || { close: r.close, date: r.date };
   try { localStorage.setItem(VCP_KEY, JSON.stringify(vcp)); } catch {}
   $("vProg").hidden = false;
@@ -4156,6 +4180,10 @@ function showEvening() {
   $("vResults").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 $("eveShow").onclick = showEvening;
+if ($("eveAuto")) {
+  $("eveAuto").checked = eveAutoOn();
+  $("eveAuto").onchange = () => { try { localStorage.setItem(EVE_AUTO, $("eveAuto").checked ? "1" : "0"); } catch {} if ($("eveAuto").checked) { try { localStorage.removeItem(EVE_SAVED); } catch {} autoSaveEvening(); } };
+}
 $("eveRefresh").onclick = () => loadEvening(true);
 if ($("sWhen")) $("sWhen").addEventListener("change", eveUI);
 loadEvening();
@@ -4220,7 +4248,10 @@ $("vWatch").onclick = () => {
   });
 };
 /* ── Scanner watchlists: one list per scanner style, items keep the full scan result ── */
+const SCAN_LIST_LABELS = { start: "Manas \u00B7 tomorrow\u2019s watchlist", startlive: "Manas \u00B7 entries (3 days)", tight: "Tight near highs", undercut: "Undercut & rally",
+  flag: "Daily flag", manas: "Manas setups", india: "India momentum", rvol: "RVOL breakout", vcp: "VCP", base: "Base patterns", canslim: "CAN SLIM", draw: "Draw a pattern", learned: "Learned" };
 function scanLabel(mode) {
+  if (SCAN_LIST_LABELS[mode]) return SCAN_LIST_LABELS[mode];
   const o = [...$("vMode").options].find(x => x.value === mode);
   return o ? o.textContent.split(" (")[0].split(" \u2014")[0].split(" with ")[0].trim() : mode;
 }
@@ -4229,27 +4260,37 @@ function compactScan(r) {
   delete o.fails;
   return o;
 }
-$("vSaveScan").onclick = () => {
-  const res = vcp.results || [];
-  if (!res.length) return;
-  const mode = vcp.mode || $("vMode").value;
-  let L = WL.lists.find(l => l.scanMode === mode);
-  const isNew = !L;
-  if (!L) { L = createList(`Scan \u00B7 ${scanLabel(mode)}`); L.scanMode = mode; L.renamedTs = Date.now(); }
-  let replace = false;
-  if (!isNew && L.items.length) {
-    replace = confirm(`\u201C${L.name}\u201D already has ${L.items.length} stocks.\n\nOK = replace them with these ${res.length} results\nCancel = keep them and add / update these ${res.length}`);
-  }
+// key of the scanner list: Manas entry has two lists (tomorrow's watchlist / recent entries)
+function scanListKey(mode) { return mode === "start" && $("sWhen") && $("sWhen").value !== "ready" ? "startlive" : mode; }
+function scanListFor(key, create) {
+  let L = WL.lists.find(l => l.scanMode === key);
+  if (!L && create) { L = createList(`Scan \u00B7 ${scanLabel(key)}`); L.scanMode = key; L.renamedTs = Date.now(); }
+  return L;
+}
+// put results into a scanner list; replace = the list becomes exactly these results (notes kept)
+function saveScanResults(key, res, at, replace) {
+  const L = scanListFor(key, true);
   const keep = new Set(res.map(r => r.symbol));
   if (replace) for (const it of [...L.items]) if (!keep.has(it.symbol)) removeFromList(L, it.symbol);
-  const at = vcp.at || Date.now();
   let added = 0, updated = 0;
   for (const r of [...res].reverse()) {
     const have = L.items.find(i => i.symbol === r.symbol);
-    const item = { ...scanItem(r), note: have ? have.note || "" : "", scan: compactScan(r), scanAt: at, scanMode: mode };
+    const item = { ...scanItem(r), note: have ? have.note || "" : "", scan: compactScan(r), scanAt: at, scanMode: key };
     if (have) { Object.assign(have, item, { editedTs: Date.now() }); updated++; }
     else { L.items.unshift({ ...item, addedTs: Date.now() }); added++; }
   }
+  return { L, added, updated };
+}
+$("vSaveScan").onclick = () => {
+  const res = vcp.results || [];
+  if (!res.length) return;
+  const key = vcp.evening && vcp.eveKey ? vcp.eveKey : scanListKey(vcp.mode || $("vMode").value);
+  const L0 = scanListFor(key, false);
+  let replace = false;
+  if (L0 && L0.items.length) {
+    replace = confirm(`\u201C${L0.name}\u201D already has ${L0.items.length} stocks.\n\nOK = replace them with these ${res.length} results\nCancel = keep them and add / update these ${res.length}`);
+  }
+  const { L, added, updated } = saveScanResults(key, res, vcp.at || Date.now(), replace);
   WL.active = L.id;
   wlSave(); refreshPrices(res.map(r => r.symbol));
   toast(`${L.name}: ${added} added${updated ? `, ${updated} updated` : ""}`);

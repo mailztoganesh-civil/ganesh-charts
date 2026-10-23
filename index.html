@@ -520,6 +520,7 @@
       <div class="brhead"><b>Tonight’s results</b><button type="button" class="link2" id="eveRefresh">Refresh</button></div>
       <p class="small" id="eveText"></p>
       <button type="button" class="vbtn" id="eveShow" hidden></button>
+      <label class="toggle small" style="margin-top:8px"><span>Auto-save every evening to the “Scan · …” watchlists</span><input type="checkbox" id="eveAuto" checked></label>
       <p class="small">Or scan now with your own settings / list:</p>
     </div>
     <button type="button" id="vScan" class="vbtn">Scan for VCP</button>
@@ -646,7 +647,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 64 · scanner watchlists</p>
+  <p class="small" style="text-align:center">Version 65 · auto-save evening scans to watchlists</p>
 </main>
 <nav class="tabbar" role="tablist" aria-label="Sections">
   <button type="button" class="tb" role="tab" data-go="market" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>Market</button>
@@ -720,8 +721,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=64"></script>
-<script src="app.js?v=64"></script>
+<script src="symbols.js?v=65"></script>
+<script src="app.js?v=65"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
