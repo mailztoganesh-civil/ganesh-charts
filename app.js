@@ -3683,7 +3683,7 @@ function readCkpt() { try { const c = JSON.parse(localStorage.getItem(SCAN_CKPT)
 function showResume() {
   const c = readCkpt(), b = $("vResume");
   if (!b) return;
-  b.hidden = !c || vcpBusy;
+  $("vResumeRow").hidden = !c || vcpBusy;
   if (c) b.textContent = `Resume last scan (${c.doneSyms.length} / ${c.symbols.length}, ${c.label || c.mode})`;
 }
 async function runVcp(resume) {
@@ -3700,7 +3700,7 @@ async function runVcp(resume) {
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
-  if ($("vResume")) $("vResume").hidden = true;
+  if ($("vResumeRow")) $("vResumeRow").hidden = true;
   $("vScan").textContent = "Stop scan";
   $("vProg").hidden = false;
   const found = resume ? resume.found : [];
@@ -4043,7 +4043,11 @@ function renderVcp() {
 }
 
 $("vScan").onclick = () => runVcp();
-if ($("vResume")) { $("vResume").onclick = () => { const c = readCkpt(); if (c) runVcp(c); }; showResume(); }
+if ($("vResume")) {
+  $("vResume").onclick = () => { const c = readCkpt(); if (c) runVcp(c); };
+  $("vResumeX").onclick = () => { try { localStorage.removeItem(SCAN_CKPT); } catch {} showResume(); toast("Unfinished scan discarded"); };
+  showResume();
+}
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
