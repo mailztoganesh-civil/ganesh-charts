@@ -701,7 +701,7 @@ function drawPad() {
     return;
   }
   const p = [...DRAW].sort((a, b) => a[0] - b[0]);
-  ctx.strokeStyle = "#1A4DB3"; ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.strokeStyle = cssVar("--blue", "#6D28D9"); ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.lineCap = "round";
   ctx.beginPath(); p.forEach(([x, y], i) => { const X = x * W, Y = (1 - y) * H; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.stroke();
 }
 function setDrawPreset(vals) {
@@ -766,7 +766,7 @@ function miniOverlay(cv, a, b) {
   const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   const line = (arr, col, w, dash) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash); ctx.beginPath();
     arr.forEach((v, i) => { const X = 2 + i / (arr.length - 1) * (W - 4), Y = 2 + (1 - v) * (H - 4); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); }); ctx.stroke(); };
-  line(b, "#9CA3AF", 2, [4, 3]); line(a, "#1A4DB3", 1.6, []);
+  line(b, "#9CA3AF", 2, [4, 3]); line(a, cssVar("--blue", "#6D28D9"), 1.6, []);
 }
 
 /* ───────── Tight near the highs — anticipation breakout ("Big move → quiet base → tight pivot → volume breakout")
@@ -4582,10 +4582,10 @@ function drawBreadthChart() {
   if (R.length) {
     ctx.textAlign = "left"; ctx.textBaseline = "top";
     ctx.fillText(fmtD(R[0].d), L, B + 4); ctx.textAlign = "right"; ctx.fillText(fmtD(R[R.length - 1].d), Rr, B + 4);
-    ctx.strokeStyle = "#1A4DB3"; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.beginPath();
+    ctx.strokeStyle = cssVar("--blue", "#6D28D9"); ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.beginPath();
     R.forEach((r, i) => { const v = brPct(r.a20, r.b20); i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)); });
     ctx.stroke();
-    const last = R[R.length - 1]; ctx.fillStyle = "#1A4DB3"; ctx.beginPath(); ctx.arc(X(R.length - 1), Y(brPct(last.a20, last.b20)), 4, 0, Math.PI * 2); ctx.fill();
+    const last = R[R.length - 1]; ctx.fillStyle = cssVar("--blue", "#6D28D9"); ctx.beginPath(); ctx.arc(X(R.length - 1), Y(brPct(last.a20, last.b20)), 4, 0, Math.PI * 2); ctx.fill();
   }
   $("brChartCap").textContent = "% of stocks above their 20-day average (last 60 days). Above 50% = most stocks rising; a sharp jump from a low = breadth breaking out. Tap the chart for a day’s value.";
   cv.onpointerdown = cv.onpointermove = e => {
@@ -4602,7 +4602,7 @@ function drawBreadthChartBase(ctx, R, X, Y, L, Rr, T, B, W, H, i) {
   cv.onpointerdown = cv.onpointermove = null;
   drawBreadthChart();                                    // redraw clean, then the crosshair
   ctx.strokeStyle = "#9CA3AF"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X(i), T); ctx.lineTo(X(i), B); ctx.stroke();
-  ctx.fillStyle = "#fff"; ctx.strokeStyle = "#1A4DB3"; ctx.lineWidth = 2;
+  ctx.fillStyle = cssVar("--card", "#fff"); ctx.strokeStyle = cssVar("--blue", "#6D28D9"); ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(X(i), Y(brPct(R[i].a20, R[i].b20)), 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 }
 function showBreadthList(title, list, day) {

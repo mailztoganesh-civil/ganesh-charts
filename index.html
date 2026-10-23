@@ -7,19 +7,19 @@
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
-<meta name="theme-color" content="#14338C" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0E1530" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#4C1D95" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#2A1458" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Ganesh Charts">
 <style>
-  :root { --navy: #14338C; --blue: #1A4DB3; --line: #E3E6EC; --sec: #6B7280; --bg: #F2F3F6; --green: #12A647; --red: #E62E2E;
-    --card: #fff; --ink: #111; --ink2: #333; --tint: #F4F6FB; --bar: rgba(255,255,255,.94); --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08); color-scheme: light; }
-  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --navy: #0E1530; --blue: #4C7DF0; --line: #2A2F37; --sec: #9AA0A8; --bg: #0F1115; --green: #34C46A; --red: #FF5A5A;
-    --card: #181B21; --ink: #E8EAED; --ink2: #C3C7CE; --tint: #1F2430; --bar: rgba(24,27,33,.94); --shadow: none; color-scheme: dark; } }
-  :root[data-theme="dark"] { --navy: #0E1530; --blue: #4C7DF0; --line: #2A2F37; --sec: #9AA0A8; --bg: #0F1115; --green: #34C46A; --red: #FF5A5A;
-    --card: #181B21; --ink: #E8EAED; --ink2: #C3C7CE; --tint: #1F2430; --bar: rgba(24,27,33,.94); --shadow: none; color-scheme: dark; }
+  :root { --navy: #4C1D95; --blue: #6D28D9; --line: #E6E1F0; --sec: #6B6680; --bg: #F3EFFA; --green: #12A647; --red: #E62E2E;
+    --card: #fff; --ink: #111; --ink2: #333; --tint: #F5F0FE; --bar: rgba(255,255,255,.94); --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08); color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --navy: #2A1458; --blue: #8B5CF6; --line: #2E2840; --sec: #A49DB8; --bg: #110D1A; --green: #34C46A; --red: #FF5A5A;
+    --card: #1A1526; --ink: #ECE8F4; --ink2: #C9C2D8; --tint: #241C36; --bar: rgba(26,21,38,.94); --shadow: none; color-scheme: dark; } }
+  :root[data-theme="dark"] { --navy: #2A1458; --blue: #8B5CF6; --line: #2E2840; --sec: #A49DB8; --bg: #110D1A; --green: #34C46A; --red: #FF5A5A;
+    --card: #1A1526; --ink: #ECE8F4; --ink2: #C9C2D8; --tint: #241C36; --bar: rgba(26,21,38,.94); --shadow: none; color-scheme: dark; }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
@@ -647,7 +647,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 65 · auto-save evening scans to watchlists</p>
+  <p class="small" style="text-align:center">Version 66 · purple theme</p>
 </main>
 <nav class="tabbar" role="tablist" aria-label="Sections">
   <button type="button" class="tb" role="tab" data-go="market" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>Market</button>
@@ -721,8 +721,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=65"></script>
-<script src="app.js?v=65"></script>
+<script src="symbols.js?v=66"></script>
+<script src="app.js?v=66"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
