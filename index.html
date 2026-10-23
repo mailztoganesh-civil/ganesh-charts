@@ -284,6 +284,10 @@
   .evebox { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 10px 0; background: var(--tint); }
   .evebox .vbtn { margin-top: 6px; }
   .resrow { display: flex; gap: 8px; margin-top: 8px; } .resrow #vResume { flex: 1; padding: 12px; } .resrow #vResumeX { width: 48px; }
+  .wscan { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; margin-top: -2px; }
+  .wscan .itags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .wscan .ilev { font-size: 13px; color: var(--ink2); }
+  .wscan .wscanat { font-size: 11px; color: var(--sec); }
 </style>
 </head>
 <body>
@@ -529,7 +533,8 @@
     <p class="small" id="vSummary"></p>
     <div id="vResults"></div>
     <div class="vact" id="vActions" hidden>
-      <button type="button" class="wbtn primary" id="vPdf">Make PDF of these</button>
+      <button type="button" class="wbtn primary" id="vSaveScan">Save to scanner watchlist</button>
+      <button type="button" class="wbtn" id="vPdf">Make PDF of these</button>
       <button type="button" class="wbtn" id="vWatch">Add all to watchlist…</button>
       <button type="button" class="link2 red" id="vClear">Clear results</button>
     </div>
@@ -641,7 +646,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 63 · discard unfinished scan</p>
+  <p class="small" style="text-align:center">Version 64 · scanner watchlists</p>
 </main>
 <nav class="tabbar" role="tablist" aria-label="Sections">
   <button type="button" class="tb" role="tab" data-go="market" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>Market</button>
@@ -715,8 +720,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=63"></script>
-<script src="app.js?v=63"></script>
+<script src="symbols.js?v=64"></script>
+<script src="app.js?v=64"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>

@@ -2394,6 +2394,20 @@ function renderWatch() {
       bd.className = `mbadge ${mi.cls}`; bd.textContent = mi.label;
       row.querySelector(".wsym").appendChild(bd);
     }
+    if (w.scan && w.scan.mode) {                                   // saved from a scanner: same details as the scan
+      try {
+        const sr = scanRowEl({ ...w.scan, symbol: w.symbol });
+        const blk = document.createElement("div"); blk.className = "wscan";
+        const tg = sr.querySelector(".itags"), lv = sr.querySelector(".ilev");
+        if (tg) blk.appendChild(tg); else { const d = document.createElement("div"); d.className = "itags"; d.textContent = [...sr.querySelectorAll("span")].map(x => x.textContent).filter(Boolean).join(" \u00B7 "); blk.appendChild(d); }
+        if (lv) blk.appendChild(lv);
+        const when = document.createElement("small"); when.className = "wscanat";
+        when.textContent = `Scanned ${new Date(w.scanAt || Date.now()).toLocaleString("en-GB", { day: "2-digit", month: "short" })}${w.scan.close ? ` at \u20B9${(+w.scan.close).toFixed(2)}` : ""}`;
+        blk.appendChild(when);
+        row.insertBefore(blk, row.querySelector(".wact"));
+        row.classList.add("hasscan");
+      } catch {}
+    }
     const ce = row.querySelector(".wchg");
     if (c !== null) {
       ce.textContent = `${c >= 0 ? "+" : ""}${c.toFixed(2)}%`;
@@ -2420,6 +2434,7 @@ function renderWatch() {
     if (selectMode) row.setAttribute("aria-pressed", String(selected.has(w.symbol)));
     const act = () => {
       if (selectMode) { selected.has(w.symbol) ? selected.delete(w.symbol) : selected.add(w.symbol); renderWatch(); }
+      else if (w.scan && w.scan.mode) openChartWin(w.symbol, scanListSource(L));
       else openChartWin(w.symbol);
     };
     row.onclick = act;
@@ -2429,6 +2444,13 @@ function renderWatch() {
 }
 
 $("wSelect").onclick = () => { selectMode = !selectMode; selected.clear(); renderWatch(); };
+// chart window for a scanner watchlist: the scan's own details, entry / stop lines and markers
+function scanListSource(L) {
+  const items = L.items.filter(i => i.scan && i.scan.mode);
+  const order = watchOrder.filter(sym => items.some(i => i.symbol === sym));
+  return { kind: "vcp", name: L.name, symbols: order.length ? order : items.map(i => i.symbol),
+    item: sym => { const it = L.items.find(i => i.symbol === sym); return it && it.scan ? { ...it.scan, symbol: sym } : { symbol: sym }; } };
+}
 
 /* ── PDF of watchlists: tick one or more lists -> one PDF per list, or one combined PDF ── */
 const wlPdfPick = new Set();
@@ -3826,220 +3848,190 @@ function renderVcp() {
     ? `${res.length} found in ${vcp.universe} (${vcp.scanned} scanned, ${new Date(vcp.at).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })})`
     : "";
   for (const r of res) {
-    const row = document.createElement("div");
-    row.className = "vrow"; row.tabIndex = 0; row.setAttribute("role", "button");
-    row.setAttribute("aria-label", `Open ${r.symbol} chart`);
-    if (r.mode === "canslim") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      const tl = [
-        r.status,
-        `N: ${r.base ? r.base.toLowerCase() : r.newHighDaysAgo === 0 ? "new high today" : `new high ${r.newHighDaysAgo}d ago`}`,
-        `S: A/D ${r.ad}`,
-        r.rsRank !== null ? `L: RS ${r.rsRank}` : (r.rsNifty !== null ? `L: vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null),
-        r.fund && r.fund.q !== null ? `C: EPS ${r.fund.q >= 0 ? "+" : ""}${r.fund.q}%${r.accel ? " \u2191" : ""}${r.fund.src.C === "NSE" ? " \u2713NSE" : ""}` : null,
-        r.fund && r.fund.a !== null ? `A: ${r.fund.a}%/yr` : null,
-        r.fund && r.fund.inst !== null ? `I: ${r.fund.inst}% inst.` : (r.iProxy ? "I: accumulating*" : null),
-      ].filter(Boolean);
-      tl.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "Breakout on volume" ? " ib" : r.status === "Extended" ? " miss" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
-      const lnk = document.createElement("a");
-      lnk.href = `https://www.screener.in/company/${encodeURIComponent(r.symbol)}/consolidated/`;
-      lnk.target = "_blank"; lnk.rel = "noopener"; lnk.className = "tag clink"; lnk.textContent = r.fund ? "Financials \u2197" : "C & A: no data, check \u2197";
-      lnk.onclick = e => e.stopPropagation();
-      tg.appendChild(lnk);
-      row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 buy zone to \u20B9${r.zoneTop.toFixed(2)} \u00B7 stop \u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`;
-      const de = row.querySelector(".vdist");
-      de.textContent = r.dist >= 0 ? `${r.dist.toFixed(1)}% above pivot` : `${Math.abs(r.dist).toFixed(1)}% below pivot`;
-      if (r.dist >= 0 && r.dist <= 5) de.classList.add("up");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "base") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      [r.type, r.status, r.rsRank !== null ? `RS ${r.rsRank}` : (r.rsNifty !== null ? `vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null), `A/D ${r.ad}`, `${r.weeks}w, ${r.depth}% deep`, ...(r.status === "Breakout on volume" ? [`Vol ${r.volX}\u00D7`] : [])]
-        .filter(Boolean).forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : i === 1 ? (r.status === "Breakout on volume" ? " ib" : r.status === "Extended" ? " miss" : "") : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 buy zone to \u20B9${r.zoneTop.toFixed(2)} \u00B7 stop \u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`;
-      const de = row.querySelector(".vdist");
-      de.textContent = r.dist >= 0 ? `${r.dist.toFixed(1)}% above pivot` : `${Math.abs(r.dist).toFixed(1)}% below pivot`;
-      if (r.dist >= 0 && r.dist <= 5) de.classList.add("up");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "flag") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.near ? " miss" : r.day1 ? " pd" : " ib") : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
-      row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
-      if (r.day1) row.querySelector(".vdist").classList.add("up");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "draw") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      [`Match ${r.score}%`, `Last ${r.win} days`, `${r.chg >= 0 ? "+" : ""}${r.chg}% over the period`].forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.score >= 90 ? " ib" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
-      const lev = row.querySelector(".ilev");
-      if (r.series && r.shape) { const mc = document.createElement("canvas"); mc.setAttribute("aria-label", "Stock line over your drawing"); lev.appendChild(mc); miniOverlay(mc, r.series, r.shape); }
-      const dd = row.querySelector(".vdist");
-      dd.textContent = `\u20B9${r.close.toFixed(2)}`;
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "tight") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.score >= 90 ? " ib" : r.score >= 80 ? " pd" : "") : t.startsWith("Weak") ? " miss" : i === 1 && r.status === "breakout" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `${r.status === "ready" ? "Buy above" : "Entry"} \u20B9${r.trigger.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 line \u20B9${r.line.toFixed(2)}`;
-      const dd = row.querySelector(".vdist");
-      dd.textContent = r.status === "breakout" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to trigger`;
-      if (r.status === "breakout") dd.classList.add("up");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "undercut") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "reclaim" ? " ib" : r.status === "watch" ? " pd" : r.ext > 6 ? " miss" : "") : t.startsWith("Below") ? " miss" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `${r.status === "base" ? "Watch the low" : r.status === "watch" ? "Buy above" : r.status === "inrange" ? "Next: above" : "Entry"} \u20B9${r.entry.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 range \u20B9${r.sup.toFixed(1)}\u2013${r.top.toFixed(1)}`;
-      const dd = row.querySelector(".vdist");
-      dd.textContent = r.status === "breakout" ? `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% over top` : r.status === "reclaim" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to entry`;
-      if (r.status === "reclaim" || r.status === "breakout") dd.classList.add("up");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "start") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : t === "Open = Low" || t === "Inside day" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = r.ready
-        ? `Tomorrow: opens \u20B9${r.openLo.toFixed(1)}\u2013${r.openHi.toFixed(1)}, holds the open, buy above \u20B9${r.trigger.toFixed(2)} \u00B7 stop = day\u2019s low`
-        : `\u25B2 Entry \u20B9${r.trigger.toFixed(2)} \u00B7 stop LOD \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
-      const dd = row.querySelector(".vdist");
-      dd.textContent = r.ready ? `${r.dist.toFixed(1)}% to trigger` : r.days === 0 ? "Today" : `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% since`;
-      if (!r.ready) dd.classList.add(r.ext >= 0 ? "up" : "down");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "manas") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : t === "IB" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `Buy above \u20B9${r.trigger.toFixed(2)} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
-      row.querySelector(".vdist").textContent = `${r.dist.toFixed(1)}% to trigger`;
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "learned") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      const bEl = row.querySelector("b");
-      const gr = document.createElement("span"); gr.className = `grade ${r.sim >= 95 ? "gA" : r.sim >= 85 ? "gB" : "gC"}`; gr.textContent = `${r.sim}%`;
-      bEl.textContent = r.symbol + " "; bEl.appendChild(gr);
-      const tg = row.querySelector(".itags");
-      [r.like ? `Like ${r.like}` : null, r.ib ? "IB" : null, `Tight ${r.f.tight5.toFixed(1)}%`, r.f.rs !== null ? `RS ${r.f.rs >= 0 ? "+" : ""}${r.f.rs.toFixed(0)}` : null, `Mom ${r.f.mom.toFixed(0)}%`, ...r.misses.map(m => `\u2717 ${m}`)]
-        .filter(Boolean).forEach(t => { const sp = document.createElement("span"); sp.className = "tag" + (t === "IB" ? " ib" : t.startsWith("Like") ? " pd" : t.startsWith("\u2717") ? " miss" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `Trigger \u20B9${r.trigger.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} (2%) or today's low \u20B9${r.todayLow.toFixed(2)}`;
-      const dd = row.querySelector(".vdist");
-      dd.textContent = `${r.dist.toFixed(1)}% to trigger`;
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "vcp2") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      const bEl = row.querySelector("b");
-      const gr = document.createElement("span"); gr.className = `grade g${r.grade}`; gr.textContent = `${r.grade} ${r.score}`;
-      bEl.textContent = r.symbol + " "; bEl.appendChild(gr);
-      const tg = row.querySelector(".itags");
-      const tagList = [r.near ? `Near miss: ${r.near}` : r.status, r.depths.map(d => d.toFixed(0) + "%").join("\u2192"), r.rsRank !== null ? `RS ${r.rsRank}` : (r.rsNifty !== null ? `vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null), `Vol ${r.volRatio.toFixed(2)}\u00D7`, `${r.baseWeeks}w base`].filter(Boolean);
-      tagList.forEach((t, k) => { const sp = document.createElement("span"); sp.className = "tag" + (k === 0 ? (r.volBreak ? " pd" : r.breakout ? " ib" : "") : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
-      const dd = row.querySelector(".vdist");
-      dd.textContent = r.dist <= 0 ? `${Math.abs(r.dist).toFixed(1)}% above` : `${r.dist.toFixed(1)}% below`;
-      if (r.dist <= 0) dd.classList.add("up");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "rvol") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      r.tags.forEach(t => { const sp = document.createElement("span"); sp.className = "tag" + (t === "Purple dot" ? " pd" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `Breakout \u20B9${r.level.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
-      const de3 = row.querySelector(".vdist");
-      de3.textContent = r.ext >= 0 ? `${r.ext.toFixed(1)}% above` : `${Math.abs(r.ext).toFixed(1)}% below`;
-      de3.classList.add(r.ext >= 0 ? "up" : "down");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    if (r.mode === "india") {
-      row.classList.add("irow");
-      row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
-      row.querySelector("b").textContent = r.symbol;
-      const tg = row.querySelector(".itags");
-      r.tags.forEach(t => { const sp = document.createElement("span"); sp.className = "tag" + (t.startsWith("IB") ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
-      row.querySelector(".ilev").textContent = `Entry \u20B9${r.entry.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
-      const de2 = row.querySelector(".vdist");
-      de2.textContent = r.dist <= 0 ? "Triggered" : `${r.dist.toFixed(1)}% to entry`;
-      if (r.dist <= 0) de2.classList.add("up");
-      row.onclick = () => openChartWin(r.symbol, vcpSource());
-      row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
-      box.appendChild(row);
-      continue;
-    }
-    row.innerHTML = `<b></b><span class="vdep"></span><span class="vpiv"></span><span class="vdist"></span><span class="vvol"></span>`;
-    row.querySelector("b").textContent = r.symbol;
-    row.querySelector(".vdep").textContent = r.depths.map(d => d.toFixed(0) + "%").join(" \u2192 ");
-    row.querySelector(".vpiv").textContent = `Pivot \u20B9${r.pivot.toFixed(2)}`;
-    const de = row.querySelector(".vdist");
-    de.textContent = r.dist <= 0 ? `${Math.abs(r.dist).toFixed(1)}% above` : `${r.dist.toFixed(1)}% below`;
-    if (r.dist <= 0) de.classList.add("up");
-    row.querySelector(".vvol").textContent = `Vol ${r.volRatio.toFixed(2)}\u00D7`;
+    const row = scanRowEl(r);
     row.onclick = () => openChartWin(r.symbol, vcpSource());
     row.onkeydown = e => { if (e.key === "Enter") openChartWin(r.symbol, vcpSource()); };
     box.appendChild(row);
   }
+}
+/* one scanner result -> its row (tags, entry / stop levels, distance); used by the scanner and by
+ * scanner watchlists, so both look the same */
+function scanRowEl(r) {
+  const row = document.createElement("div");
+  row.className = "vrow"; row.tabIndex = 0; row.setAttribute("role", "button");
+  row.setAttribute("aria-label", `Open ${r.symbol} chart`);
+  if (r.mode === "canslim") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    const tl = [
+      r.status,
+      `N: ${r.base ? r.base.toLowerCase() : r.newHighDaysAgo === 0 ? "new high today" : `new high ${r.newHighDaysAgo}d ago`}`,
+      `S: A/D ${r.ad}`,
+      r.rsRank !== null ? `L: RS ${r.rsRank}` : (r.rsNifty !== null ? `L: vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null),
+      r.fund && r.fund.q !== null ? `C: EPS ${r.fund.q >= 0 ? "+" : ""}${r.fund.q}%${r.accel ? " \u2191" : ""}${r.fund.src.C === "NSE" ? " \u2713NSE" : ""}` : null,
+      r.fund && r.fund.a !== null ? `A: ${r.fund.a}%/yr` : null,
+      r.fund && r.fund.inst !== null ? `I: ${r.fund.inst}% inst.` : (r.iProxy ? "I: accumulating*" : null),
+    ].filter(Boolean);
+    tl.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "Breakout on volume" ? " ib" : r.status === "Extended" ? " miss" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
+    const lnk = document.createElement("a");
+    lnk.href = `https://www.screener.in/company/${encodeURIComponent(r.symbol)}/consolidated/`;
+    lnk.target = "_blank"; lnk.rel = "noopener"; lnk.className = "tag clink"; lnk.textContent = r.fund ? "Financials \u2197" : "C & A: no data, check \u2197";
+    lnk.onclick = e => e.stopPropagation();
+    tg.appendChild(lnk);
+    row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 buy zone to \u20B9${r.zoneTop.toFixed(2)} \u00B7 stop \u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`;
+    const de = row.querySelector(".vdist");
+    de.textContent = r.dist >= 0 ? `${r.dist.toFixed(1)}% above pivot` : `${Math.abs(r.dist).toFixed(1)}% below pivot`;
+    if (r.dist >= 0 && r.dist <= 5) de.classList.add("up");
+    return row;
+  }
+  if (r.mode === "base") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    [r.type, r.status, r.rsRank !== null ? `RS ${r.rsRank}` : (r.rsNifty !== null ? `vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null), `A/D ${r.ad}`, `${r.weeks}w, ${r.depth}% deep`, ...(r.status === "Breakout on volume" ? [`Vol ${r.volX}\u00D7`] : [])]
+      .filter(Boolean).forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : i === 1 ? (r.status === "Breakout on volume" ? " ib" : r.status === "Extended" ? " miss" : "") : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 buy zone to \u20B9${r.zoneTop.toFixed(2)} \u00B7 stop \u20B9${r.stop.toFixed(2)} (${r.stopPct}%)`;
+    const de = row.querySelector(".vdist");
+    de.textContent = r.dist >= 0 ? `${r.dist.toFixed(1)}% above pivot` : `${Math.abs(r.dist).toFixed(1)}% below pivot`;
+    if (r.dist >= 0 && r.dist <= 5) de.classList.add("up");
+    return row;
+  }
+  if (r.mode === "flag") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.near ? " miss" : r.day1 ? " pd" : " ib") : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
+    row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
+    if (r.day1) row.querySelector(".vdist").classList.add("up");
+    return row;
+  }
+  if (r.mode === "draw") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    [`Match ${r.score}%`, `Last ${r.win} days`, `${r.chg >= 0 ? "+" : ""}${r.chg}% over the period`].forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.score >= 90 ? " ib" : " pd") : ""); sp.textContent = t; tg.appendChild(sp); });
+    const lev = row.querySelector(".ilev");
+    if (r.series && r.shape) { const mc = document.createElement("canvas"); mc.setAttribute("aria-label", "Stock line over your drawing"); lev.appendChild(mc); miniOverlay(mc, r.series, r.shape); }
+    const dd = row.querySelector(".vdist");
+    dd.textContent = `\u20B9${r.close.toFixed(2)}`;
+    return row;
+  }
+  if (r.mode === "tight") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.score >= 90 ? " ib" : r.score >= 80 ? " pd" : "") : t.startsWith("Weak") ? " miss" : i === 1 && r.status === "breakout" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `${r.status === "ready" ? "Buy above" : "Entry"} \u20B9${r.trigger.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 line \u20B9${r.line.toFixed(2)}`;
+    const dd = row.querySelector(".vdist");
+    dd.textContent = r.status === "breakout" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to trigger`;
+    if (r.status === "breakout") dd.classList.add("up");
+    return row;
+  }
+  if (r.mode === "undercut") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.status === "reclaim" ? " ib" : r.status === "watch" ? " pd" : r.ext > 6 ? " miss" : "") : t.startsWith("Below") ? " miss" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `${r.status === "base" ? "Watch the low" : r.status === "watch" ? "Buy above" : r.status === "inrange" ? "Next: above" : "Entry"} \u20B9${r.entry.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 range \u20B9${r.sup.toFixed(1)}\u2013${r.top.toFixed(1)}`;
+    const dd = row.querySelector(".vdist");
+    dd.textContent = r.status === "breakout" ? `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% over top` : r.status === "reclaim" ? "Today" : `${Math.abs(r.dist).toFixed(1)}% to entry`;
+    if (r.status === "reclaim" || r.status === "breakout") dd.classList.add("up");
+    return row;
+  }
+  if (r.mode === "start") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : t === "Open = Low" || t === "Inside day" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = r.ready
+      ? `Tomorrow: opens \u20B9${r.openLo.toFixed(1)}\u2013${r.openHi.toFixed(1)}, holds the open, buy above \u20B9${r.trigger.toFixed(2)} \u00B7 stop = day\u2019s low`
+      : `\u25B2 Entry \u20B9${r.trigger.toFixed(2)} \u00B7 stop LOD \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
+    const dd = row.querySelector(".vdist");
+    dd.textContent = r.ready ? `${r.dist.toFixed(1)}% to trigger` : r.days === 0 ? "Today" : `${r.ext >= 0 ? "+" : ""}${r.ext.toFixed(1)}% since`;
+    if (!r.ready) dd.classList.add(r.ext >= 0 ? "up" : "down");
+    return row;
+  }
+  if (r.mode === "manas") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? " pd" : t === "IB" ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `Buy above \u20B9${r.trigger.toFixed(2)} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
+    row.querySelector(".vdist").textContent = `${r.dist.toFixed(1)}% to trigger`;
+    return row;
+  }
+  if (r.mode === "learned") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    const bEl = row.querySelector("b");
+    const gr = document.createElement("span"); gr.className = `grade ${r.sim >= 95 ? "gA" : r.sim >= 85 ? "gB" : "gC"}`; gr.textContent = `${r.sim}%`;
+    bEl.textContent = r.symbol + " "; bEl.appendChild(gr);
+    const tg = row.querySelector(".itags");
+    [r.like ? `Like ${r.like}` : null, r.ib ? "IB" : null, `Tight ${r.f.tight5.toFixed(1)}%`, r.f.rs !== null ? `RS ${r.f.rs >= 0 ? "+" : ""}${r.f.rs.toFixed(0)}` : null, `Mom ${r.f.mom.toFixed(0)}%`, ...r.misses.map(m => `\u2717 ${m}`)]
+      .filter(Boolean).forEach(t => { const sp = document.createElement("span"); sp.className = "tag" + (t === "IB" ? " ib" : t.startsWith("Like") ? " pd" : t.startsWith("\u2717") ? " miss" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `Trigger \u20B9${r.trigger.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} (2%) or today's low \u20B9${r.todayLow.toFixed(2)}`;
+    const dd = row.querySelector(".vdist");
+    dd.textContent = `${r.dist.toFixed(1)}% to trigger`;
+    return row;
+  }
+  if (r.mode === "vcp2") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    const bEl = row.querySelector("b");
+    const gr = document.createElement("span"); gr.className = `grade g${r.grade}`; gr.textContent = `${r.grade} ${r.score}`;
+    bEl.textContent = r.symbol + " "; bEl.appendChild(gr);
+    const tg = row.querySelector(".itags");
+    const tagList = [r.near ? `Near miss: ${r.near}` : r.status, r.depths.map(d => d.toFixed(0) + "%").join("\u2192"), r.rsRank !== null ? `RS ${r.rsRank}` : (r.rsNifty !== null ? `vs Nifty ${r.rsNifty >= 0 ? "+" : ""}${r.rsNifty.toFixed(0)}` : null), `Vol ${r.volRatio.toFixed(2)}\u00D7`, `${r.baseWeeks}w base`].filter(Boolean);
+    tagList.forEach((t, k) => { const sp = document.createElement("span"); sp.className = "tag" + (k === 0 ? (r.volBreak ? " pd" : r.breakout ? " ib" : "") : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `Pivot \u20B9${r.pivot.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
+    const dd = row.querySelector(".vdist");
+    dd.textContent = r.dist <= 0 ? `${Math.abs(r.dist).toFixed(1)}% above` : `${r.dist.toFixed(1)}% below`;
+    if (r.dist <= 0) dd.classList.add("up");
+    return row;
+  }
+  if (r.mode === "rvol") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach(t => { const sp = document.createElement("span"); sp.className = "tag" + (t === "Purple dot" ? " pd" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `Breakout \u20B9${r.level.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
+    const de3 = row.querySelector(".vdist");
+    de3.textContent = r.ext >= 0 ? `${r.ext.toFixed(1)}% above` : `${Math.abs(r.ext).toFixed(1)}% below`;
+    de3.classList.add(r.ext >= 0 ? "up" : "down");
+    return row;
+  }
+  if (r.mode === "india") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    r.tags.forEach(t => { const sp = document.createElement("span"); sp.className = "tag" + (t.startsWith("IB") ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
+    row.querySelector(".ilev").textContent = `Entry \u20B9${r.entry.toFixed(2)} \u00B7 SL \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
+    const de2 = row.querySelector(".vdist");
+    de2.textContent = r.dist <= 0 ? "Triggered" : `${r.dist.toFixed(1)}% to entry`;
+    if (r.dist <= 0) de2.classList.add("up");
+    return row;
+  }
+  row.innerHTML = `<b></b><span class="vdep"></span><span class="vpiv"></span><span class="vdist"></span><span class="vvol"></span>`;
+  row.querySelector("b").textContent = r.symbol;
+  row.querySelector(".vdep").textContent = r.depths.map(d => d.toFixed(0) + "%").join(" \u2192 ");
+  row.querySelector(".vpiv").textContent = `Pivot \u20B9${r.pivot.toFixed(2)}`;
+  const de = row.querySelector(".vdist");
+  de.textContent = r.dist <= 0 ? `${Math.abs(r.dist).toFixed(1)}% above` : `${r.dist.toFixed(1)}% below`;
+  if (r.dist <= 0) de.classList.add("up");
+  row.querySelector(".vvol").textContent = `Vol ${r.volRatio.toFixed(2)}\u00D7`;
+  return row;
 }
 
 $("vScan").onclick = () => runVcp();
@@ -4226,6 +4218,42 @@ $("vWatch").onclick = () => {
       toast(`Added ${n} to ${dest.name}${res.length - n ? ` (${res.length - n} already there)` : ""}`);
     },
   });
+};
+/* ── Scanner watchlists: one list per scanner style, items keep the full scan result ── */
+function scanLabel(mode) {
+  const o = [...$("vMode").options].find(x => x.value === mode);
+  return o ? o.textContent.split(" (")[0].split(" \u2014")[0].split(" with ")[0].trim() : mode;
+}
+function compactScan(r) {
+  const o = JSON.parse(JSON.stringify(r));
+  delete o.fails;
+  return o;
+}
+$("vSaveScan").onclick = () => {
+  const res = vcp.results || [];
+  if (!res.length) return;
+  const mode = vcp.mode || $("vMode").value;
+  let L = WL.lists.find(l => l.scanMode === mode);
+  const isNew = !L;
+  if (!L) { L = createList(`Scan \u00B7 ${scanLabel(mode)}`); L.scanMode = mode; L.renamedTs = Date.now(); }
+  let replace = false;
+  if (!isNew && L.items.length) {
+    replace = confirm(`\u201C${L.name}\u201D already has ${L.items.length} stocks.\n\nOK = replace them with these ${res.length} results\nCancel = keep them and add / update these ${res.length}`);
+  }
+  const keep = new Set(res.map(r => r.symbol));
+  if (replace) for (const it of [...L.items]) if (!keep.has(it.symbol)) removeFromList(L, it.symbol);
+  const at = vcp.at || Date.now();
+  let added = 0, updated = 0;
+  for (const r of [...res].reverse()) {
+    const have = L.items.find(i => i.symbol === r.symbol);
+    const item = { ...scanItem(r), note: have ? have.note || "" : "", scan: compactScan(r), scanAt: at, scanMode: mode };
+    if (have) { Object.assign(have, item, { editedTs: Date.now() }); updated++; }
+    else { L.items.unshift({ ...item, addedTs: Date.now() }); added++; }
+  }
+  WL.active = L.id;
+  wlSave(); refreshPrices(res.map(r => r.symbol));
+  toast(`${L.name}: ${added} added${updated ? `, ${updated} updated` : ""}`);
+  if (typeof showTab === "function") showTab("watch");
 };
 $("vClear").onclick = () => { vcp = { results: [], scanned: 0, universe: "", at: null }; try { localStorage.removeItem(VCP_KEY); } catch {} renderVcp(); $("vProg").hidden = true; };
 // keep the scan button's count current when Step 1 / watchlists change
