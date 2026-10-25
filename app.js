@@ -1016,6 +1016,159 @@ function analyseTight(c, cfg) {
   };
 }
 
+/* ───────── Qullamaggie (Kristjan Kullamägi) — his two long setups, found BEFORE the entry ─────────
+ * BREAKOUT: a big move (30–100%+ in 1–3 months) → an orderly 2–8 week consolidation with higher lows
+ *   and shrinking candles, "surfing" a rising 10 / 20-day average, volume drying up → price pressed
+ *   just under the consolidation high. Buy the break of the high (opening-range high), stop = low of
+ *   the entry day, never wider than ~1 ADR. Only volatile stocks (ADR 4%+) and liquid ones.
+ * EPISODIC PIVOT (EP): a gap up of 10%+ on huge volume (news / results) in a stock that had NOT run
+ *   up in the months before (neglected). Buy above the gap day's high, stop = gap day's low.
+ * Exits (his rule): sell 1/3–1/2 after 3–5 days, stop to break-even, trail the rest with the 10-day
+ *   (fast stocks) or 20-day average and exit on the first close below it. */
+const QULLA_RULES = {
+  data: "Not enough history", liq: "Price / liquidity too low", adr: "Not volatile enough (ADR too small)",
+  move: "No big move (30%+) into the base", ma: "Not surfing a rising 10 / 20-day average", base: "Base too deep or too long / short",
+  contract: "Candles not shrinking (no higher lows / tightening)", near: "Not pressed near the base high", vol: "Volume not drying up",
+  extended: "Already extended above the high", ep: "No episodic pivot", weakbo: "Broke out, but on light volume",
+};
+const QULLA_SHORT = { move: "move", ma: "10/20 MA", base: "base", contract: "tightening", near: "far from high", vol: "volume", adr: "ADR" };
+function qullaSettings() {
+  return {
+    show: $("qShow").value,
+    minScore: clampInt($("qScore").value, 30, 100, 80),
+    mom: clampInt($("qMom").value, 0, 500, 30),
+    minR: clampInt($("qMinW").value, 1, 20, 2) * 5,
+    maxR: clampInt($("qMaxW").value, 2, 40, 8) * 5,
+    depth: clampInt($("qDepth").value, 5, 50, 25),
+    adr: Math.max(0.5, parseFloat($("qAdr").value) || 4),
+    near: Math.max(0.5, parseFloat($("qNear").value) || 5),
+    gap: Math.max(1, parseFloat($("qGap").value) || 10),
+    epVol: Math.max(0.5, parseFloat($("qEpVol").value) || 3),
+    epDays: clampInt($("qEpDays").value, 1, 10, 3),
+    neglect: clampInt($("qNeglect").value, 0, 500, 30),
+    turn: Math.max(0, parseFloat($("qTurn").value) || 0),
+    minPrice: Math.max(0, parseFloat($("qMinPrice").value) || 0),
+  };
+}
+function analyseQulla(c, cfg) {
+  const fail = f => ({ fails: [f] });
+  const n = c.length;
+  if (n < 120) return fail("data");
+  const O = c.map(x => x.open || x.close), H = c.map(x => x.high), L = c.map(x => x.low), C = c.map(x => x.close), V = c.map(x => x.volume || 0);
+  const k = n - 1, close = C[k];
+  const turn = close * smaAt(V, k, 20) / 1e7;
+  if (close < cfg.minPrice || turn < cfg.turn) return fail("liq");
+  let adr = 0; for (let j = k - 19; j <= k; j++) adr += (H[j] / L[j] - 1) * 100; adr /= 20;
+  const v50 = smaAt(V, k - 1, 50) || 1;
+  const part = (v, good, bad) => good === bad ? (v <= good ? 1 : 0) : Math.max(0, Math.min(1, (bad - v) / (bad - good)));
+  const sma = (j, w) => smaAt(C, j, w);
+  const out = [];
+
+  /* ── EP: a 10%+ gap on heavy volume in the last few days, still holding the gap day's low ── */
+  if (cfg.show !== "bo") {
+    for (let d = k; d >= Math.max(61, k - cfg.epDays + 1); d--) {
+      const gap = (O[d] / C[d - 1] - 1) * 100, dayChg = (C[d] / C[d - 1] - 1) * 100, vr = V[d] / (smaAt(V, d - 1, 50) || 1);
+      if (gap < cfg.gap * 0.6 || dayChg < cfg.gap * 0.5) continue;
+      let held = true; for (let j = d + 1; j <= k; j++) if (C[j] < L[d]) held = false;
+      if (!held) continue;
+      const before = (C[d - 1] / Math.min(...C.slice(d - 61, d - 1)) - 1) * 100;   // run-up in the 3 months before
+      const closePos = H[d] > L[d] ? (C[d] - L[d]) / (H[d] - L[d]) : 1;
+      const parts = {
+        gap: [part(-gap, -cfg.gap, -cfg.gap * 0.6), 30],
+        vol: [part(-vr, -cfg.epVol, -cfg.epVol * 0.4), 30],
+        close: [part(-closePos, -0.5, 0), 15],
+        neglect: [part(before, cfg.neglect, cfg.neglect * 3), 15],
+        liq: [part(-adr, -cfg.adr * 0.75, 0), 10],
+      };
+      let sc = 0, w = 0; for (const [p, wt] of Object.values(parts)) { sc += p * wt; w += wt; }
+      const score = Math.round(sc / w * 100);
+      if (score < cfg.minScore) continue;
+      let hiSince = 0; for (let j = d; j <= k; j++) hiSince = Math.max(hiSince, H[j]);
+      const trigger = hiSince * 1.001, sl = L[d] * 0.995, risk = (trigger - sl) / trigger * 100;
+      const weak = Object.entries(parts).filter(([, [p]]) => p < 0.999).map(([key]) => ({ gap: "gap", vol: "volume", close: "weak close", neglect: "ran up before", liq: "ADR" })[key]);
+      out.push({
+        fails: [], mode: "qulla", setup: "ep", status: d === k ? "ep" : "ephold", score, close, date: ymd(c[k].date),
+        epDate: ymd(c[d].date), epDays: k - d, gap: Math.round(gap * 10) / 10, dayChg: Math.round(dayChg * 10) / 10, epVol: Math.round(vr * 10) / 10,
+        before: Math.round(before), epHigh: H[d], epLow: L[d], trigger, sl, risk: Math.round(risk * 10) / 10, adr: Math.round(adr * 10) / 10,
+        s10: sma(k, 10), s20: sma(k, 20), dist: Math.round((trigger - close) / trigger * 1000) / 10, turn: Math.round(turn * 10) / 10,
+        near: weak.length ? weak.join(", ") : null,
+        tags: [`Match ${score}%`, d === k ? "EP today" : `EP ${k - d}d ago`, `Gap +${gap.toFixed(1)}%`, `Vol ${vr.toFixed(1)}×`, `Day +${dayChg.toFixed(1)}%`,
+          before <= cfg.neglect ? `Neglected (${Math.round(before)}% in 3m)` : `Ran ${Math.round(before)}% before`, `ADR ${adr.toFixed(1)}%`, ...(weak.length ? [`Weak: ${weak.join(", ")}`] : [])],
+      });
+      break;
+    }
+  }
+
+  /* ── BREAKOUT: big move → orderly base surfing the 10/20-day → pressed under the high ── */
+  let boFail = null;
+  if (cfg.show !== "ep") {
+    // base high = highest high of the last maxR days (not counting today)
+    let hiIdx = k - 1; for (let j = k - 1; j >= Math.max(1, k - cfg.maxR); j--) if (H[j] > H[hiIdx]) hiIdx = j;
+    const line = H[hiIdx], R = k - hiIdx;                   // base length in days (high → today)
+    let low = Infinity, lowIdx = hiIdx; for (let j = hiIdx; j <= k - 1; j++) if (L[j] < low) { low = L[j]; lowIdx = j; }
+    if (R <= 1) { low = Math.min(L[k - 1], L[k]); }
+    const depth = (line / low - 1) * 100;
+    let pre = Infinity; for (let j = Math.max(0, hiIdx - 65); j < hiIdx; j++) pre = Math.min(pre, L[j]);
+    const move = (line / pre - 1) * 100;
+    const s10 = sma(k, 10), s20 = sma(k, 20), s50 = sma(k, 50), s10p = sma(k - 3, 10), s20p = sma(k - 5, 20), s50p = sma(k - 10, 50);
+    const maOk = (close >= s10 * 0.98 || close >= s20) && s20 > s20p && s10 >= s20 * 0.98 && close > s50 && s50 > s50p;
+    const maPart = maOk ? 1 : (s20 > s20p ? 0.4 : 0) + (close > s20 ? 0.3 : 0) + (s50 > s50p && close > s50 ? 0.3 : 0);
+    // tightening: last 5 candles vs the average candle of the base / the move, and higher lows in the base
+    let rNow = 0; for (let j = k - 4; j <= k; j++) rNow += (H[j] / L[j] - 1); rNow /= 5;
+    let rBase = 0; const b0 = Math.max(hiIdx - 10, 1); for (let j = b0; j <= k - 5; j++) rBase += (H[j] / L[j] - 1); rBase /= Math.max(1, k - 5 - b0 + 1);
+    const contr = rBase > 0 ? rNow / rBase : 1;
+    const half = Math.floor((hiIdx + k) / 2);
+    let l1 = Infinity, l2 = Infinity; for (let j = hiIdx; j <= half; j++) l1 = Math.min(l1, L[j]); for (let j = half + 1; j <= k; j++) l2 = Math.min(l2, L[j]);
+    const higherLows = R < 6 || l2 >= l1 * 0.995;
+    const under = (1 - close / line) * 100;
+    let v5 = 0; for (let j = k - 5; j <= k - 1; j++) v5 += V[j]; v5 /= 5;
+    const volRatio = v5 / v50, volToday = V[k] / v50;
+    const breakout = close > line;
+    const ext = (close / line - 1) * 100;
+    const baseLenPart = R >= cfg.minR && R <= cfg.maxR ? 1 : R < cfg.minR ? Math.max(0.4, R / cfg.minR) : 0.5;
+    const parts = {
+      move: [part(-move, -cfg.mom, 0), 20],
+      ma: [maPart, 20],
+      base: [Math.min(part(depth, cfg.depth, cfg.depth * 1.8), baseLenPart), 10],
+      contract: [Math.min(part(contr, 0.75, 1.3), higherLows ? 1 : 0.4), 15],
+      near: [breakout ? part(ext, adr, adr * 2) : part(under, cfg.near, cfg.near * 2.5), 15],
+      adr: [part(-adr, -cfg.adr, -cfg.adr * 0.5), 10],
+      vol: [breakout ? part(-volToday, -1.5, -0.8) : part(volRatio, 1, 1.8), 10],
+    };
+    let sc = 0, w = 0; for (const [p, wt] of Object.values(parts)) { sc += p * wt; w += wt; }
+    const score = Math.round(sc / w * 100);
+    const weak = Object.entries(parts).filter(([, [p]]) => p < 0.999).sort((a, b) => a[1][0] * a[1][1] - b[1][0] * b[1][1]).map(([key]) => key);
+    if (R < 5) boFail = "base";                                     // a real pause of a week or more
+    else if (adr < cfg.adr * 0.75) boFail = "adr";                      // his must-haves: a volatile stock…
+    else if (move < cfg.mom * 0.75) boFail = "move";                // …that already made a big move
+    else if (close < s50 || s20 < s20p * 0.995) boFail = "ma";      // …and is still in an uptrend
+    else if (breakout && ext > adr * 2) boFail = "extended";
+    else if (score < cfg.minScore) boFail = weak[0] || "near";
+    else {
+      const status = breakout ? (volToday >= 1.5 ? "breakout" : "weakbo") : "ready";
+      // entry = break of the base high; Kris's stop = low of the entry day, capped at about 1 ADR
+      const trigger = breakout ? close : line * 1.001;
+      const lodToday = L[k];
+      const sl = breakout ? Math.max(lodToday, trigger * (1 - adr / 100)) : Math.max(trigger * (1 - adr / 100), Math.min(L[k], L[k - 1]));
+      const risk = (trigger - sl) / trigger * 100;
+      const nearTxt = weak.length ? weak.map(x => QULLA_SHORT[x]).join(", ") : null;
+      out.push({
+        fails: [], mode: "qulla", setup: "bo", status, score, close, date: ymd(c[k].date), line, baseLow: low, baseStart: ymd(c[hiIdx].date),
+        trigger, sl, risk: Math.round(risk * 10) / 10, adr: Math.round(adr * 10) / 10, move: Math.round(move), depth: Math.round(depth * 10) / 10,
+        days: R, contr: Math.round(contr * 100) / 100, higherLows, volRatio: Math.round(volRatio * 100) / 100, volToday: Math.round(volToday * 10) / 10,
+        s10, s20, s50, dist: Math.round((trigger - close) / trigger * 1000) / 10, ext: Math.round(ext * 10) / 10, turn: Math.round(turn * 10) / 10, near: nearTxt,
+        tags: [`Match ${score}%`, status === "breakout" ? "Breakout today" : status === "weakbo" ? "Breakout, light volume" : "Ready (before the break)",
+          `Move +${Math.round(move)}%`, `${R}-day base, ${depth.toFixed(1)}% deep`, `ADR ${adr.toFixed(1)}%`,
+          close >= s10 ? "Above 10-day" : close >= s20 ? "On the 20-day" : "Below 10/20-day", `Candles ${Math.round(contr * 100)}% of base`,
+          breakout ? `${ext.toFixed(1)}% over the high` : `${under.toFixed(1)}% under the high`, ...(nearTxt ? [`Weak: ${nearTxt}`] : [])],
+      });
+    }
+  }
+  if (!out.length) return fail(boFail || "ep");
+  out.sort((a, b) => b.score - a.score);
+  return out[0];
+}
+
 /* ───────── Range undercut & rally (TraderLion "Ultimate Trading Guide") ─────────
  * A stock goes sideways in a range after an advance, dips BELOW the range low (a shakeout that
  * runs the stops), then rallies back inside. Two entries:
@@ -3086,7 +3239,33 @@ async function showVcpAt(sym, n, force) {
     box.appendChild(d);
   };
   let mark;
-  if (r.mode === "smc") {
+  if (r.mode === "qulla") {
+    const ep = r.setup === "ep";
+    add("Setup", ep ? "Episodic pivot (EP)" : "Breakout", "up");
+    add("Match", `${r.score}%${r.near ? ` \u00B7 weak: ${r.near}` : " \u00B7 all his rules met"}`, r.score >= 90 ? "up" : r.score < 80 ? "down" : "");
+    add("Stage", { ready: "Ready \u00B7 pressed under the high (before the break)", breakout: "Broke out today on volume", weakbo: "Broke out today, light volume", ep: "Gapped up today (EP day 1)", ephold: `EP ${r.epDays} day${r.epDays > 1 ? "s" : ""} ago, holding the gap` }[r.status], r.status === "ready" || r.status === "ep" || r.status === "breakout" ? "up" : "");
+    add(r.status === "breakout" || r.status === "weakbo" ? "Entry" : "Buy above", `\u20B9${r.trigger.toFixed(2)}${ep ? " (above the EP high, opening-range break)" : " (break of the base high)"}`, "up");
+    add("Stop", `\u20B9${r.sl.toFixed(2)} \u00B7 ${ep ? "low of the gap day" : "low of the entry day, max 1 ADR"}`);
+    add("Risk", `${r.risk.toFixed(1)}% \u00B7 ADR ${r.adr}%`, r.risk > r.adr * 1.3 ? "down" : "");
+    if (ep) {
+      add("Gap", `+${r.gap}% open, +${r.dayChg}% day on ${fmtD(r.epDate)}`, "up");
+      add("Volume", `${r.epVol}\u00D7 the 50-day average`, r.epVol >= 3 ? "up" : "");
+      add("Before the gap", `${r.before}% in 3 months${r.before <= 30 ? " (neglected \u2014 good)" : ""}`);
+    } else {
+      add("Big move before", `+${r.move}% in the 3 months into the base`, "up");
+      add("Base", `${r.days} days since the high, ${r.depth}% deep \u00B7 high \u20B9${r.line.toFixed(2)}`);
+      add("Tightening", `last 5 candles ${Math.round(r.contr * 100)}% of the base\u2019s \u00B7 ${r.higherLows ? "higher lows" : "no higher lows"}`);
+      add("Volume", r.status === "ready" ? `${r.volRatio}\u00D7 avg in the last 5 days` : `${r.volToday}\u00D7 avg today`);
+    }
+    add("10 / 20-day avg", `\u20B9${r.s10.toFixed(2)} / \u20B9${r.s20.toFixed(2)}`);
+    add("Exit plan", "Sell \u2153\u2013\u00BD after 3\u20135 days, stop to break-even, trail the rest: exit on the first close below the 10-day (fast) or 20-day");
+    $("cwNote").textContent = ep
+      ? "Qullamaggie EP: a big surprise (results / news) gaps a neglected stock up 10%+ on huge volume. He buys the opening-range high with the stop at the low of the day. Next days: buy above the EP high while it holds the gap-day low."
+      : "Qullamaggie breakout: the strongest stocks (30\u2013100%+ move) rest in an orderly, tightening base while surfing the rising 10 / 20-day. Buy the break of the base high (opening-range high), stop = low of the day, no wider than 1 ADR. Volume should expand on the break.";
+    mark = ep
+      ? { triDates: [r.epDate], triMain: r.epDate, lines: [{ price: r.trigger, label: "Buy above", color: "rgb(18,140,51)" }, { price: r.sl, label: "Stop (EP low)", color: "rgb(217,26,26)" }] }
+      : { lines: [{ price: r.line, label: "Base high", color: "rgb(26,77,179)" }, { price: r.trigger, label: r.status === "ready" ? "Buy above" : "Entry", color: "rgb(18,140,51)" }, { price: r.sl, label: "Stop", color: "rgb(217,26,26)" }] };
+  } else if (r.mode === "smc") {
     add("Stage", { waiting: "CHoCH done \u00B7 waiting for the pullback into the gap", inzone: "In the buy zone today", intrade: `Bought in the zone \u00B7 now ${r.r >= 0 ? "+" : ""}${r.r}R` }[r.status], r.status === "inzone" ? "up" : "");
     add(`Buy zone (${r.zType})`, `\u20B9${r.zoneLo.toFixed(2)} \u2013 \u20B9${r.zoneHi.toFixed(2)}`, "up");
     add("Stop", `\u20B9${r.sl.toFixed(2)} (under the higher low)`);
@@ -3880,7 +4059,7 @@ async function runVcp(resume) {
   const mode = resume ? resume.mode : $("vMode").value;
   if (mode === "learned" && !learned) { toast("Tap \u201CLearn from these trades\u201D first"); return; }
   if (mode === "draw" && DRAW.length < 3) { toast("Draw a pattern (or pick a preset) first"); return; }
-  const cfg = resume ? resume.cfg : mode === "smc" ? smcSettings() : mode === "draw" ? drawSettings() : mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
+  const cfg = resume ? resume.cfg : mode === "qulla" ? qullaSettings() : mode === "smc" ? smcSettings() : mode === "draw" ? drawSettings() : mode === "tight" ? tightSettings() : mode === "undercut" ? ucSettings() : mode === "start" ? startSettings() : mode === "canslim" ? canslimSettings() : mode === "base" ? baseSettings() : mode === "flag" ? flagSettings() : mode === "manas" ? manasSettings() : mode === "india" ? indiaSettings() : mode === "rvol" ? rvolSettings() : mode === "learned"
     ? { minSim: clampInt($("lSim").value, 50, 100, 85), widen: clampInt($("lWiden").value, 0, 100, 0), minPrice: 20 }
     : vcpSettings();
   vcpBusy = true; vcpStop = false;
@@ -3938,8 +4117,8 @@ async function runVcp(resume) {
       if (!c.length) noData++;
       if ((mode === "vcp" || mode === "base" || mode === "canslim") && c.length) allRs.push(rsScoreOf(c.map(x => x.close)));
       if (mode === "canslim") cfg._sym = sym;
-      let r = c.length ? (mode === "smc" ? analyseSmc(c, cfg) : mode === "draw" ? analyseDraw(c, cfg) : mode === "tight" ? analyseTight(c, cfg) : mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
-      if ((mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight" || mode === "smc") && r) {
+      let r = c.length ? (mode === "qulla" ? analyseQulla(c, cfg) : mode === "smc" ? analyseSmc(c, cfg) : mode === "draw" ? analyseDraw(c, cfg) : mode === "tight" ? analyseTight(c, cfg) : mode === "undercut" ? analyseUndercut(c, cfg) : mode === "start" ? analyseStart(c, cfg) : mode === "canslim" ? analyseCanslim(c, cfg, nifty) : mode === "base" ? analyseBase(c, cfg, nifty) : mode === "flag" ? analyseFlag(c, cfg) : mode === "manas" ? analyseManas(c, nifty, cfg) : mode === "india" ? analyseIndia(c, nifty, cfg) : mode === "rvol" ? analyseRvol(c, cfg) : mode === "learned" ? analyseLearned(c, nifty, cfg) : analyseVcp(c, cfg, nifty)) : null;
+      if ((mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight" || mode === "smc" || mode === "qulla") && r) {
         (r.fails.length ? r.fails : ["ok"]).forEach(f => (tally[f] = (tally[f] || 0) + 1));
         if (!r.mode || r.fails.length > (cfg.nearMiss ? 1 : 0)) r = null;   // keep matches (+ near misses)
       }
@@ -3959,8 +4138,8 @@ async function runVcp(resume) {
   try { wakeLock?.release(); } catch {}
   vcpBusy = false;
   $("vProgText").textContent = `${vcpStop ? "Stopped" : "Done"}: ${done} scanned, ${finalList.length} found${noData ? ` (${noData} without data)` : ""}${(mode === "india" || mode === "vcp") && !nifty ? ". Nifty data unavailable" : ""}${(mode === "vcp" || mode === "base" || mode === "canslim") && allRs.filter(x => x !== null).length < 60 ? ". Fewer than 60 stocks, so RS is measured against Nifty instead of an RS rank" : ""}.`;
-  if (mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight" || mode === "smc") {
-    const RULES = mode === "flag" ? FLAG_RULES : mode === "undercut" ? UC_RULES : mode === "tight" ? TIGHT_RULES : mode === "smc" ? SMC_RULES : VCP_RULES;
+  if (mode === "vcp" || mode === "flag" || mode === "undercut" || mode === "tight" || mode === "smc" || mode === "qulla") {
+    const RULES = mode === "qulla" ? QULLA_RULES : mode === "flag" ? FLAG_RULES : mode === "undercut" ? UC_RULES : mode === "tight" ? TIGHT_RULES : mode === "smc" ? SMC_RULES : VCP_RULES;
     const items = Object.entries(tally).filter(([k]) => k !== "ok").sort((a, b) => b[1] - a[1]);
     $("vWhy").hidden = !items.length;
     $("vWhyList").innerHTML = "";
@@ -3978,7 +4157,10 @@ async function runVcp(resume) {
 // Classic: closest to pivot first. India: inside bars first, then the tightest risk
 const UC_ORDER = { reclaim: 0, watch: 1, inrange: 2, breakout: 3, base: 4 };
 const SMC_ORDER = { inzone: 0, waiting: 1, intrade: 2 };
-const sortVcp = arr => [...arr].sort((a, b) => a.mode === "smc"
+const QULLA_ORDER = { ep: 0, breakout: 1, ready: 2, ephold: 3, weakbo: 4 };
+const sortVcp = arr => [...arr].sort((a, b) => a.mode === "qulla"
+  ? (b.score - a.score) || (QULLA_ORDER[a.status] - QULLA_ORDER[b.status]) || (a.risk - b.risk)
+  : a.mode === "smc"
   ? (SMC_ORDER[a.status] - SMC_ORDER[b.status]) || (a.status === "waiting" ? a.dist - b.dist : a.risk - b.risk)
   : a.mode === "draw"
   ? (b.score - a.score)
@@ -4001,7 +4183,7 @@ const sortVcp = arr => [...arr].sort((a, b) => a.mode === "smc"
 
 function vcpSource() {
   const order = vcp.results.map(r => r.symbol);
-  return { kind: "vcp", name: vcp.mode === "smc" ? "Smart Money buys" : vcp.mode === "draw" ? "Drawn pattern" : vcp.mode === "tight" ? "Tight near highs" : vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
+  return { kind: "vcp", name: vcp.mode === "qulla" ? "Qullamaggie setups" : vcp.mode === "smc" ? "Smart Money buys" : vcp.mode === "draw" ? "Drawn pattern" : vcp.mode === "tight" ? "Tight near highs" : vcp.mode === "undercut" ? "Undercut & rally" : vcp.mode === "start" ? "Manas entries" : vcp.mode === "canslim" ? "CAN SLIM" : vcp.mode === "base" ? "Base patterns" : vcp.mode === "flag" ? "Daily flags" : vcp.mode === "manas" ? "Manas setups" : vcp.mode === "learned" ? "Learned scan" : vcp.mode === "india" ? "Momentum scan" : vcp.mode === "rvol" ? "RVOL breakouts" : "VCP scan", symbols: order, item: sym => vcp.results.find(r => r.symbol === sym) };
 }
 
 function renderVcp() {
@@ -4073,6 +4255,20 @@ function scanRowEl(r) {
     row.querySelector(".ilev").textContent = `${r.day1 ? "Expanding now" : `Buy above \u20B9${r.trigger.toFixed(2)}`} \u00B7 stop ${r.stopType} \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}%`;
     row.querySelector(".vdist").textContent = r.day1 ? "Day 1" : `${r.dist.toFixed(1)}% to pivot`;
     if (r.day1) row.querySelector(".vdist").classList.add("up");
+    return row;
+  }
+  if (r.mode === "qulla") {
+    row.classList.add("irow");
+    row.innerHTML = `<b></b><span class="itags"></span><span class="ilev"></span><span class="vdist"></span>`;
+    row.querySelector("b").textContent = r.symbol;
+    const tg = row.querySelector(".itags");
+    const st0 = document.createElement("span"); st0.className = "tag ib"; st0.textContent = r.setup === "ep" ? "Episodic pivot" : "Breakout"; tg.appendChild(st0);
+    r.tags.forEach((t, i) => { const sp = document.createElement("span"); sp.className = "tag" + (i === 0 ? (r.score >= 90 ? " ib" : r.score >= 80 ? " pd" : "") : t.startsWith("Weak") ? " miss" : i === 1 && (r.status === "breakout" || r.status === "ep") ? " ib" : ""); sp.textContent = t; tg.appendChild(sp); });
+    const pre = r.status === "breakout" || r.status === "weakbo" ? "Bought today" : "Buy above";
+    row.querySelector(".ilev").textContent = `${pre} \u20B9${r.trigger.toFixed(2)} \u00B7 stop \u20B9${r.sl.toFixed(2)} \u00B7 risk ${r.risk.toFixed(1)}% \u00B7 trail 10-day \u20B9${(r.s10 || 0).toFixed(1)}`;
+    const dd = row.querySelector(".vdist");
+    dd.textContent = r.status === "breakout" || r.status === "ep" ? "Today" : r.status === "ephold" ? `EP ${r.epDays}d ago` : `${Math.abs(r.dist).toFixed(1)}% to trigger`;
+    if (r.status === "breakout" || r.status === "ep") dd.classList.add("up");
     return row;
   }
   if (r.mode === "smc") {
@@ -4220,7 +4416,13 @@ if ($("vResume")) {
 function vcpModeUI() {
   const m = $("vMode").value, india = m === "india";
   $("setIndia").hidden = m !== "india"; $("setVcp").hidden = m !== "vcp"; $("setRvol").hidden = m !== "rvol";
-  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut"; $("setTight").hidden = m !== "tight"; $("drawBox").hidden = m !== "draw"; $("setSmc").hidden = m !== "smc";
+  $("learnBox").hidden = m !== "learned"; $("setLearned").hidden = m !== "learned"; $("setManas").hidden = m !== "manas"; $("setFlag").hidden = m !== "flag"; $("setBase").hidden = m !== "base"; $("setCanslim").hidden = m !== "canslim"; $("setStart").hidden = m !== "start"; $("setUc").hidden = m !== "undercut"; $("setTight").hidden = m !== "tight"; $("drawBox").hidden = m !== "draw"; $("setSmc").hidden = m !== "smc"; $("setQulla").hidden = m !== "qulla";
+  if (m === "qulla") {
+    $("vDesc").textContent = "Qullamaggie (Kristjan Kullam\u00E4gi) \u2014 his two long setups, found before the entry. BREAKOUT: a 30\u2013100%+ move in 1\u20133 months, then an orderly 2\u20138 week base with higher lows and shrinking candles, surfing a rising 10 / 20-day average, volume drying up, price pressed under the base high; ADR 4%+. Buy the break of the high, stop = low of the day (max 1 ADR). EPISODIC PIVOT: a 10%+ gap on 3\u00D7+ volume in a stock that hadn\u2019t run up \u2014 buy above the gap-day high, stop = gap-day low. Exit: sell \u2153\u2013\u00BD after 3\u20135 days, trail the rest with the 10 / 20-day. Ranked by match % with his rules. Tip: run after 3:30 pm for tomorrow\u2019s list.";
+    try { localStorage.setItem("gc:vcpmode", m); } catch {}
+    if (typeof eveUI === "function") eveUI();
+    return;
+  }
   if (m === "smc") {
     $("vDesc").textContent = "Smart Money Concepts, buy side: after a downtrend (lower highs) the stock makes a higher low, then closes above the last lower high \u2014 a bullish Change of Character (CHoCH). Don\u2019t buy the break: buy when price comes back into the gap (fair value gap) or order block the move left behind. Stop under the higher low, target 2.5R. The chart shades the gap and order block and labels HH / HL / LH / LL.";
     try { localStorage.setItem("gc:vcpmode", m); } catch {}
@@ -4348,7 +4550,7 @@ function showEvening() {
   $("vProg").hidden = false;
   $("vBar").style.width = "100%";
   $("vProgText").textContent = `Tonight\u2019s results: ${EVE.scanned} scanned on GitHub, ${e.results.length} found (default settings).`;
-  const RULES = { smc: typeof SMC_RULES !== "undefined" ? SMC_RULES : {}, flag: typeof FLAG_RULES !== "undefined" ? FLAG_RULES : {}, undercut: typeof UC_RULES !== "undefined" ? UC_RULES : {}, tight: typeof TIGHT_RULES !== "undefined" ? TIGHT_RULES : {}, vcp: typeof VCP_RULES !== "undefined" ? VCP_RULES : {} }[mode];
+  const RULES = { qulla: typeof QULLA_RULES !== "undefined" ? QULLA_RULES : {}, smc: typeof SMC_RULES !== "undefined" ? SMC_RULES : {}, flag: typeof FLAG_RULES !== "undefined" ? FLAG_RULES : {}, undercut: typeof UC_RULES !== "undefined" ? UC_RULES : {}, tight: typeof TIGHT_RULES !== "undefined" ? TIGHT_RULES : {}, vcp: typeof VCP_RULES !== "undefined" ? VCP_RULES : {} }[mode];
   const items = e.tally ? Object.entries(e.tally).filter(([x]) => x !== "ok").sort((a, b) => b[1] - a[1]) : [];
   $("vWhy").hidden = !items.length;
   $("vWhyList").innerHTML = "";
@@ -4388,7 +4590,9 @@ $("vPdf").onclick = () => {
   generate(syms, { notes });
 };
 function scanItem(r) {
-        const note = r.mode === "smc"
+        const note = r.mode === "qulla"
+          ? `Qullamaggie ${r.setup === "ep" ? `EP (gap +${r.gap}% on ${fmtD(r.epDate)})` : `breakout (move +${r.move}%, ${r.days}d base)`} \u00B7 match ${r.score}%: buy above \u20B9${r.trigger.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)} (${r.risk}%), trail 10/20-day`
+          : r.mode === "smc"
           ? `Smart Money (${r.status}): buy \u20B9${r.zoneLo.toFixed(2)}-${r.zoneHi.toFixed(2)}, stop \u20B9${r.sl.toFixed(2)}, target \u20B9${r.target.toFixed(2)}`
           : r.mode === "draw"
           ? `Drawn pattern: match ${r.score}% over the last ${r.win} days`
@@ -4415,7 +4619,7 @@ function scanItem(r) {
           : r.mode === "india"
           ? `Entry \u20B9${r.entry.toFixed(2)} SL \u20B9${r.sl.toFixed(2)} (${r.tags.join(", ")})`
           : `VCP pivot \u20B9${r.pivot.toFixed(2)} (${r.depths.map(d => d.toFixed(0)).join("\u2192")}%)`;
-        const plan = r.mode === "smc" ? { entry: r.entry, sl: r.sl } : r.mode === "tight" ? { entry: r.trigger, sl: r.sl } : r.mode === "undercut" ? { entry: r.entry, sl: r.sl } : r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
+        const plan = r.mode === "qulla" ? { entry: r.trigger, sl: r.sl } : r.mode === "smc" ? { entry: r.entry, sl: r.sl } : r.mode === "tight" ? { entry: r.trigger, sl: r.sl } : r.mode === "undercut" ? { entry: r.entry, sl: r.sl } : r.mode === "start" ? { entry: r.trigger, sl: r.sl } : r.mode === "canslim" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "base" ? { entry: Math.max(r.pivot, r.close > r.pivot ? r.close : r.pivot), sl: r.stop } : r.mode === "manas" || r.mode === "learned" || r.mode === "flag" ? { entry: r.trigger, sl: r.sl } : r.mode === "india" ? { entry: r.entry, sl: r.sl } : r.mode === "vcp2" ? { entry: r.pivot, sl: r.sl } : r.mode === "rvol" ? { entry: r.close, sl: r.sl } : {};
         return { symbol: r.symbol, addedOn: ymd(new Date()), price: r.close, priceDate: r.date, note, source: "Scanner", ...plan };
 }
 $("vWatch").onclick = () => {
@@ -4433,7 +4637,7 @@ $("vWatch").onclick = () => {
   });
 };
 /* ── Scanner watchlists: one list per scanner style, items keep the full scan result ── */
-const SCAN_LIST_LABELS = { start: "Manas \u00B7 tomorrow\u2019s watchlist", startlive: "Manas \u00B7 entries (3 days)", tight: "Tight near highs", undercut: "Undercut & rally",
+const SCAN_LIST_LABELS = { qulla: "Qullamaggie setups", start: "Manas \u00B7 tomorrow\u2019s watchlist", startlive: "Manas \u00B7 entries (3 days)", tight: "Tight near highs", undercut: "Undercut & rally",
   smc: "Smart Money (CHoCH + gap)", flag: "Daily flag", manas: "Manas setups", india: "India momentum", rvol: "RVOL breakout", vcp: "VCP", base: "Base patterns", canslim: "CAN SLIM", draw: "Draw a pattern", learned: "Learned" };
 function scanLabel(mode) {
   if (SCAN_LIST_LABELS[mode]) return SCAN_LIST_LABELS[mode];

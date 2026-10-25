@@ -335,6 +335,7 @@
     <h2>Scanner</h2>
     <label class="vlab" for="vMode">Style</label>
     <select id="vMode" class="vsel">
+      <option value="qulla">Qullamaggie — breakouts &amp; episodic pivots</option>
       <option value="smc">Smart Money — CHoCH + gap (FVG) buy</option>
       <option value="draw">Draw a pattern (like Chartink)</option>
       <option value="tight">Tight near the highs — anticipation breakout</option>
@@ -457,6 +458,19 @@
         <label>Target <input type="number" id="smRR" value="2.5" min="1" step="0.5"> × risk</label>
         <label>Min 20-day turnover ₹ <input type="number" id="smTurn" value="5" min="0"> Cr</label>
         <label>Min price ₹ <input type="number" id="smMinPrice" value="20" min="0"></label>
+      </div>
+      <div class="vgrid" id="setQulla" hidden>
+        <label>Shortlist: match ≥ <input type="number" id="qScore" value="80" min="30" max="100" step="5"> % <span class="small">(100 = every rule met; 90+ = textbook; 80–90 = check the chart)</span></label>
+        <label>Show <select id="qShow"><option value="all">Breakouts + episodic pivots</option><option value="bo">Breakouts only</option><option value="ep">Episodic pivots only</option></select></label>
+        <label>Big move into the base ≥ <input type="number" id="qMom" value="30" min="0" max="500"> % (in 3 months)</label>
+        <label>Base length <input type="number" id="qMinW" value="2" min="1" max="20"> to <input type="number" id="qMaxW" value="8" min="2" max="40"> weeks</label>
+        <label>Base no deeper than <input type="number" id="qDepth" value="25" min="5" max="50"> %</label>
+        <label>Pressed within <input type="number" id="qNear" value="5" min="0.5" step="0.5"> % of the base high</label>
+        <label>ADR (average daily range) ≥ <input type="number" id="qAdr" value="4" min="0.5" step="0.5"> %</label>
+        <label>EP: gap up ≥ <input type="number" id="qGap" value="10" min="1" step="1"> % on volume ≥ <input type="number" id="qEpVol" value="3" min="0.5" step="0.5">× avg</label>
+        <label>EP: in the last <input type="number" id="qEpDays" value="3" min="1" max="10"> days · up no more than <input type="number" id="qNeglect" value="30" min="0" max="500"> % in the 3 months before</label>
+        <label>Min 20-day turnover ₹ <input type="number" id="qTurn" value="5" min="0"> Cr</label>
+        <label>Min price ₹ <input type="number" id="qMinPrice" value="20" min="0"></label>
       </div>
       <div class="vgrid" id="setTight" hidden>
         <label>Shortlist: match ≥ <input type="number" id="tScore" value="75" min="30" max="100" step="5"> % <span class="small">(100 = every rule met; 85+ = strong; 70–80 = close, check the chart)</span></label>
@@ -659,7 +673,7 @@
     <div id="downloads"></div>
     <button class="link" id="clearSaved" type="button">Delete saved PDFs</button>
   </section>
-  <p class="small" style="text-align:center">Version 67 · Smart Money (CHoCH + gap) scanner</p>
+  <p class="small" style="text-align:center">Version 68 · Qullamaggie scanner</p>
 </main>
 <nav class="tabbar" role="tablist" aria-label="Sections">
   <button type="button" class="tb" role="tab" data-go="market" aria-selected="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>Market</button>
@@ -733,8 +747,8 @@
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="symbols.js?v=67"></script>
-<script src="app.js?v=67"></script>
+<script src="symbols.js?v=68"></script>
+<script src="app.js?v=68"></script>
 <script>
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 </script>
