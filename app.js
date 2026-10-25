@@ -1142,7 +1142,9 @@ function analyseQulla(c, cfg) {
     else if (adr < cfg.adr * 0.75) boFail = "adr";                      // his must-haves: a volatile stock…
     else if (move < cfg.mom * 0.75) boFail = "move";                // …that already made a big move
     else if (close < s50 || s20 < s20p * 0.995) boFail = "ma";      // …and is still in an uptrend
-    else if (breakout && ext > adr * 2) boFail = "extended";
+    else if (breakout && ext > adr) boFail = "extended";              // he buys the break, not 1 ADR above it
+    else if (!breakout && under > cfg.near * 2) boFail = "near";        // must be pressed near the high
+    else if (!breakout && (contr > 1.15 || !higherLows)) boFail = "contract";   // the base must be quieting down
     else if (score < cfg.minScore) boFail = weak[0] || "near";
     else {
       const status = breakout ? (volToday >= 1.5 ? "breakout" : "weakbo") : "ready";
