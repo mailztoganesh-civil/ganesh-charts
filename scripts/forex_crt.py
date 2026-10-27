@@ -25,7 +25,7 @@ PAIRS = [  # (name, yahoo symbol, pip size)
 ]
 NEAR = 0.25          # "anticipated" when within 25% of the previous candle's range
 KEEP = {"1H": 100, "4H": 100, "D": 60, "W": 60, "M": 24}   # candles per timeframe sent to the app
-LTF_KEEP = {"15m": 72, "5m": 54}                    # lower-timeframe candles for the HTF+LTF view
+LTF_KEEP = {"15m": 200, "5m": 150}                    # lower-timeframe candles for the HTF+LTF view
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forex", "data", "crt.json")
 NY = "America/New_York"
 TFS = {"1H": None, "4H": None, "D": None, "W": None}

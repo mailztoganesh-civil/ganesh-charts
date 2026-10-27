@@ -255,15 +255,30 @@ function chart(p, r) {
   if (!split) return;
   // lower timeframe: candles since the start of C1 (or the last 3 higher-TF candles)
   const [key, name] = LTF_OF[detail.tf];
-  const src = key === "15m" || key === "5m" ? (p.ltf && p.ltf[key]) : (p.tf[key] && p.tf[key].candles);
+  let src = key === "15m" || key === "5m" ? (p.ltf && p.ltf[key]) : (p.tf[key] && p.tf[key].candles);
   $("#cap2").textContent = `${name} (lower timeframe) inside the ${TF_NAME[detail.tf]} candles`;
-  const keys = Object.keys(map).length ? Object.entries(map).map(([k, i]) => [k.startsWith("in") ? "" : k, i]) : [["", last]];
-  const firstHtf = cs[Math.max(0, Math.min(...keys.map(([, i]) => i)))][0];
-  const lt = (src || []).filter(c => c[0] >= firstHtf);
+  // sections of the higher-timeframe candles: C1, the candles inside its range (one group), C2, C3, C4
+  const secs = [];
+  for (const [k, i] of Object.entries(map)) {
+    if (i < 0) continue;
+    if (k.startsWith("in")) { if (!secs.length || secs[secs.length - 1].k !== "inside") secs.push({ k: "inside", t: cs[i][0] }); }
+    else secs.push({ k, t: cs[i][0] });
+  }
+  if (!secs.length) secs.push({ k: "", t: cs[last][0] });
+  const srcAll = src || [], maxN = W < 500 ? 110 : 180;
+  src = srcAll.slice(-maxN);                       // keep the lower-timeframe chart readable on a phone
+  const t0 = src.length ? src[0][0] : Infinity;
+  // drop sections that end before the lower-timeframe data begins; the first kept one starts at the data start
+  let first = 0;
+  for (let j = 0; j < secs.length; j++) if (secs[j].t <= t0) first = j;
+  const shown = secs.slice(first);
+  const lt = src.filter(c => c[0] >= Math.max(shown[0].t, t0));
   if (lt.length < 3) { draw($("#cv2"), p, r, [], { empty: `No ${name} candles in this scan yet — they arrive with the next scan.` }); return; }
   const idxOf = t => { const k = lt.findIndex(c => c[0] >= t); return k < 0 ? lt.length : k; };
-  const starts = keys.map(([k, i]) => ({ k, i: idxOf(cs[i][0]) }));
-  const labels = starts.filter(x => x.k).map((x, j) => ({ k: x.k, at: "top", i: x.i, j: j + 1 < starts.length ? starts[j + 1].i : lt.length }));
+  const starts = shown.map((x, j) => ({ k: x.k, i: j === 0 ? 0 : idxOf(x.t) }));
+  const labels = starts.filter(x => x.k).map(x => { const j = starts.indexOf(x);
+    return { k: x.k === "inside" ? "inside C1" : x.k, at: "top", i: x.i, j: j + 1 < starts.length ? starts[j + 1].i : lt.length, small: x.k === "inside" }; });
+  if (first > 0) $("#cap2").textContent += ` (from ${secs[first].k === "inside" ? "the inside candles" : secs[first].k}; earlier candles not shown)`;
   draw($("#cv2"), p, r, lt, { from: starts[0].i, intraday: key !== "D", labels, seps: starts.map(x => x.i), m1: r.m1 });
 }
 function draw(cv, p, r, cs, o) {
@@ -348,6 +363,8 @@ function draw(cv, p, r, cs, o) {
       g.save(); if (L.small) { g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; }
       g.fillText(L.k, X(L.i), L.i % 2 ? 26 : 13); g.restore(); return;   // alternate rows so neighbours never overlap
     }
+    if (L.at === "top" && L.small) { const xm = (X(L.i) - step / 2 + X(Math.min(L.j, cs.length) - 1) + step / 2) / 2;
+      g.save(); g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; g.fillText(L.k, xm, 13); g.restore(); return; }
     if (L.at === "top") { const xm = (X(L.i) - step / 2 + X(Math.min(L.j, cs.length) - 1) + step / 2) / 2; g.fillText(L.k, xm, 13); }
     else { const c = cs[L.i]; g.save(); if (L.small) { g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; }
       g.fillText(L.k, X(L.i), r.dir === 1 ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(padT + 2, Y(c[2]) - 6)); g.restore(); }

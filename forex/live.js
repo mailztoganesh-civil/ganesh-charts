@@ -12,7 +12,7 @@ const PAIRS = [
   ["XAUUSD", "GC=F", 0.1],
 ];
 const NEAR = 0.25;
-const KEEP = { "1H": 100, "4H": 100, D: 60, W: 60, M: 24 }, LTF_KEEP = { "15m": 72, "5m": 54 };
+const KEEP = { "1H": 100, "4H": 100, D: 60, W: 60, M: 24 }, LTF_KEEP = { "15m": 200, "5m": 150 };
 const TF_HOURS = { "1H": 1, "4H": 4, D: 24, W: 120, M: 0 };
 const LTF_FOR = { M: "D", W: "4H", D: "1H", "4H": "15m", "1H": "5m" };
 const H = 3600, DAY = 86400;
@@ -285,7 +285,7 @@ async function pair(base, [name, ysym, pip]) {
   const tfs = build(bars), row = { sym: name, pip, src: ysym, tf: {}, price: bars[bars.length - 1].c, ltf: {} };
   for (const tf of ["1H", "4H", "D", "W", "M"]) { const r = classify(tfs[tf], tf, pip); if (r) row.tf[tf] = r; }
   const dg = pip >= 0.1 ? 2 : pip >= 0.01 ? 3 : 5;
-  const [m15, m5] = await Promise.all([get(base, ysym, "15m", "5d").catch(() => []), get(base, ysym, "5m", "1d").catch(() => [])]);
+  const [m15, m5] = await Promise.all([get(base, ysym, "15m", "5d").catch(() => []), get(base, ysym, "5m", "2d").catch(() => [])]);
   const toL = a => a.map(b => [b.t, b.o, b.h, b.l, b.c]);
   const ltfFull = { "15m": toL(m15), "5m": toL(m5) };
   addModel1(row, tfs, ltfFull);
