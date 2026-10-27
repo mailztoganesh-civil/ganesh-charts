@@ -208,6 +208,15 @@ function drawDetail() {
   // levels
   const L = [["Price", fmt(p, r.price)]];
   if (r.c1h != null) L.push(["C1 high", fmt(p, r.c1h)], ["C1 low", fmt(p, r.c1l)]);
+  const cs0 = r.candles || [], mp = cMap(r, cs0.length - 1), when = i => {
+    const c = cs0[i]; if (!c) return "–"; const d = new Date(c[0] * 1000), t = detail.tf;
+    if (t === "M") return d.toLocaleDateString([], { month: "short", year: "numeric" });
+    if (t === "W") return "wk of " + d.toLocaleDateString([], { day: "2-digit", month: "short" });
+    if (t === "D") return d.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "short" });
+    return d.toLocaleString([], { day: "2-digit", month: "short" }) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  if (mp.C1 != null && mp.C1 >= 0) L.push(["C1 candle", when(mp.C1)]);
+  if (mp.C2 != null && mp.C2 >= 0) L.push(["C2 candle (sweep)", when(mp.C2) + (C2_BACK[r.status] ? "" : " · live")]);
+  if (insideCount(r)) L.push(["Inside candles", insideCount(r)]);
   if (r.t1 != null) L.push(["Mid (T1)", fmt(p, r.t1) + (r.hit1 ? " ✓" : "")]);
   if (r.t2 != null) L.push(["Target (T2)", fmt(p, r.t2)]);
   if (r.inv != null) L.push(["Invalid", fmt(p, r.inv)]);
@@ -239,19 +248,26 @@ function cMap(r, last) {            // positions of C1 (the range candle, may be
   return m;
 }
 const insideCount = r => r.c1Back == null ? 0 : Math.max(0, r.c1Back - (C2_BACK[r.status] || 0) - (r.status === "anticipated" ? 0 : 1));
+function marksOf(map) {               // C1 / inside run / C2 / C3 / C4 positions for the drawing
+  const ins = Object.entries(map).filter(([k, i]) => k.startsWith("in") && i >= 0).map(([, i]) => i);
+  const ok = i => i != null && i >= 0 ? i : null;
+  return { c1: ok(map.C1), c2: ok(map.C2), c3: ok(map.C3), c4: ok(map.C4), ins: ins.length ? [Math.min(...ins), Math.max(...ins)] : null };
+}
 function chart(p, r) {
   const split = view === "split" && LTF_OF[detail.tf];
   $("#cvWrap2").hidden = !split;
   $("#charts").classList.toggle("two", !!split);
   const W = $("#cv").clientWidth;
-  const all = r.candles || []; const cs = all.slice(-Math.min(all.length, split ? (W < 500 ? 16 : 30) : (W < 500 ? 30 : 50)));
+  const all = r.candles || [], n = all.length;
+  // zoom so the CRT candles are big: a few candles of context before C1, then everything up to now
+  const maxN = split ? (W < 500 ? 16 : 30) : (W < 500 ? 26 : 50), minN = split ? 12 : (W < 500 ? 16 : 24);
+  let s0 = Math.max(0, n - maxN);
+  if (r.c1Back != null) s0 = Math.max(0, Math.min(n - 1 - r.c1Back - 5, n - minN));
+  const cs = all.slice(s0);
   if (cs.length < 3) return;
   const last = cs.length - 1, map = cMap(r, last);
   $("#cap1").textContent = `${TF_NAME[detail.tf]} (higher timeframe)`;
-  draw($("#cv"), p, r, cs, {
-    from: map.C1 ?? last, intraday: detail.tf === "1H" || detail.tf === "4H",
-    labels: Object.entries(map).filter(([, i]) => i >= 0).map(([k, i]) => ({ i, k: k.startsWith("in") ? "in" : k, at: "col", small: k.startsWith("in") })),
-    seps: [], c1box: map.C1 != null && map.C1 >= 0 ? map.C1 : null });
+  draw($("#cv"), p, r, cs, { from: map.C1 ?? last, intraday: detail.tf === "1H" || detail.tf === "4H", marks: marksOf(map) });
   if (!split) return;
   // lower timeframe: candles since the start of C1 (or the last 3 higher-TF candles)
   const [key, name] = LTF_OF[detail.tf];
@@ -265,8 +281,8 @@ function chart(p, r) {
     else secs.push({ k, t: cs[i][0] });
   }
   if (!secs.length) secs.push({ k: "", t: cs[last][0] });
-  const srcAll = src || [], maxN = W < 500 ? 110 : 180;
-  src = srcAll.slice(-maxN);                       // keep the lower-timeframe chart readable on a phone
+  const srcAll = src || [], ltN = W < 500 ? 110 : 180;
+  src = srcAll.slice(-ltN);                        // keep the lower-timeframe chart readable on a phone
   const t0 = src.length ? src[0][0] : Infinity;
   // drop sections that end before the lower-timeframe data begins; the first kept one starts at the data start
   let first = 0;
@@ -276,43 +292,59 @@ function chart(p, r) {
   if (lt.length < 3) { draw($("#cv2"), p, r, [], { empty: `No ${name} candles in this scan yet — they arrive with the next scan.` }); return; }
   const idxOf = t => { const k = lt.findIndex(c => c[0] >= t); return k < 0 ? lt.length : k; };
   const starts = shown.map((x, j) => ({ k: x.k, i: j === 0 ? 0 : idxOf(x.t) }));
-  const labels = starts.filter(x => x.k).map(x => { const j = starts.indexOf(x);
-    return { k: x.k === "inside" ? "inside C1" : x.k, at: "top", i: x.i, j: j + 1 < starts.length ? starts[j + 1].i : lt.length, small: x.k === "inside" }; });
+  const bands = starts.map((x, j) => ({ k: x.k, i0: x.i, i1: (j + 1 < starts.length ? starts[j + 1].i : lt.length) - 1 })).filter(b => b.k && b.i1 >= b.i0);
   if (first > 0) $("#cap2").textContent += ` (from ${secs[first].k === "inside" ? "the inside candles" : secs[first].k}; earlier candles not shown)`;
-  draw($("#cv2"), p, r, lt, { from: starts[0].i, intraday: key !== "D", labels, seps: starts.map(x => x.i), m1: r.m1 });
+  draw($("#cv2"), p, r, lt, { from: starts[0].i, intraday: key !== "D", bands, seps: starts.map(x => x.i), m1: r.m1 });
 }
+const FONT = "-apple-system,Segoe UI,Roboto,sans-serif";
 function draw(cv, p, r, cs, o) {
   const dpr = window.devicePixelRatio || 1;
   const W = cv.clientWidth, H = cv.clientHeight;
   cv.width = W * dpr; cv.height = H * dpr;
   const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
   const C = { ink: css("--ink"), sec: css("--sec"), line: css("--line"), up: css("--green"), dn: css("--red"), blue: css("--blue"), amber: css("--amber"), tint: css("--tint") };
-  if (o.empty) { g.fillStyle = C.sec; g.font = "13px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillText(o.empty, 10, H / 2); return; }
-  const last = cs.length - 1;
-  const colLabels = (o.labels || []).some(L => L.at === "col");
-  const padR = 64, padB = 22, padT = colLabels ? 32 : 18, plotW = W - padR - 6, plotH = H - padB - padT;
-  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext, r.q && r.q.keyLvl, r.q2 && r.q2.tspot].filter(v => v != null);
+  if (o.empty) { g.fillStyle = C.sec; g.font = "13px " + FONT; g.fillText(o.empty, 10, H / 2); return; }
+  const last = cs.length - 1, M = o.marks || {};
+  const padR = 64, padB = 22, padT = (o.marks || o.bands) ? 42 : 18, plotW = W - padR - 6, plotH = H - padB - padT;
+  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext, r.q && r.q.keyLvl].filter(v => v != null);
   let hi = Math.max(...cs.map(c => c[2]), ...lv), lo = Math.min(...cs.map(c => c[3]), ...lv);
   const padY = (hi - lo) * 0.06 || hi * 0.001; hi += padY; lo -= padY;
   const step = plotW / (cs.length + 4), bw = Math.max(1.5, step * 0.62);
   const X = i => 6 + step * (i + 0.5), Y = v => padT + (hi - v) / (hi - lo) * plotH;
-  g.font = "11px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; g.strokeStyle = C.line; g.lineWidth = 1;
+  const ROLE = { C1: C.amber, C2: C.dn, C3: C.blue, C4: C.blue, inside: C.sec };
+  g.font = "11px " + FONT; g.fillStyle = C.sec; g.strokeStyle = C.line; g.lineWidth = 1;
   for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4, y = Y(v); g.beginPath(); g.moveTo(0, y); g.lineTo(plotW + 6, y); g.stroke(); g.fillText(fmt(p, v), plotW + 10, y + 4); }
   const x0 = X(o.from) - step / 2;
   if (r.c1h != null) { g.fillStyle = C.tint; g.globalAlpha = .9; g.fillRect(x0, Y(r.c1h), plotW + 6 - x0, Y(r.c1l) - Y(r.c1h)); g.globalAlpha = 1; }
+  // coloured columns behind the CRT candles: C1 amber, C2 red, C3/C4 purple
+  const band = (i0, i1, col, a) => { g.save(); g.globalAlpha = a; g.fillStyle = col; g.fillRect(X(i0) - step / 2, padT - 4, (i1 - i0 + 1) * step, plotH + 4); g.restore(); };
+  if (M.c1 != null) band(M.c1, M.c1, C.amber, .2);
+  if (M.c2 != null) band(M.c2, M.c2, C.dn, .14);
+  if (M.c3 != null) band(M.c3, M.c3, C.blue, .08);
+  (o.bands || []).forEach(b => { if (b.k !== "inside") band(b.i0, b.i1, ROLE[b.k] || C.sec, b.k === "C1" ? .12 : b.k === "C2" ? .1 : .05); });
   // higher-timeframe candle dividers (lower-timeframe chart)
   g.save(); g.strokeStyle = C.sec; g.setLineDash([3, 4]);
   (o.seps || []).forEach(i => { const x = X(i) - step / 2; g.beginPath(); g.moveTo(x, padT - 4); g.lineTo(x, H - padB); g.stroke(); });
   g.restore();
+  const inIns = i => M.ins && i >= M.ins[0] && i <= M.ins[1];
   cs.forEach((c, i) => {
     const up = c[4] >= c[1]; g.strokeStyle = g.fillStyle = up ? C.up : C.dn;
+    g.globalAlpha = inIns(i) ? .4 : 1;              // candles inside C1 are noise: dim them
     g.beginPath(); g.moveTo(X(i), Y(c[2])); g.lineTo(X(i), Y(c[3])); g.stroke();
     const y1 = Y(Math.max(c[1], c[4])), y2 = Y(Math.min(c[1], c[4]));
     g.fillRect(X(i) - bw / 2, y1, bw, Math.max(1, y2 - y1));
   });
-  if (o.c1box != null) {          // outline the C1 range candle
-    const c = cs[o.c1box]; g.save(); g.strokeStyle = C.amber; g.lineWidth = 1.5;
-    g.strokeRect(X(o.c1box) - step / 2 + 1, Y(c[2]) - 3, step - 2, Y(c[3]) - Y(c[2]) + 6); g.restore();
+  g.globalAlpha = 1;
+  if (M.c1 != null) {             // outline the C1 range candle
+    const c = cs[M.c1]; g.save(); g.strokeStyle = C.amber; g.lineWidth = 2;
+    g.strokeRect(X(M.c1) - step / 2 + 1, Y(c[2]) - 3, step - 2, Y(c[3]) - Y(c[2]) + 6); g.restore();
+  }
+  if (M.c2 != null && r.c1h != null) {   // C2: the part of its wick beyond C1 = the sweep (turtle soup)
+    const c = cs[M.c2], x = X(M.c2);
+    g.save(); g.strokeStyle = C.dn; g.lineWidth = Math.max(3, bw * 0.35); g.lineCap = "round";
+    [[c[2] > r.c1h, r.c1h, c[2]], [c[3] < r.c1l, r.c1l, c[3]]].forEach(([sw, a, b]) => { if (!sw) return;
+      g.beginPath(); g.moveTo(x, Y(a)); g.lineTo(x, Y(b)); g.stroke(); g.fillStyle = C.dn; g.beginPath(); g.arc(x, Y(b), 4, 0, 7); g.fill(); });
+    g.restore();
   }
   const tags = [];
   const hline = (v, col, txt, dash) => { if (v == null) return; const y = Y(v); g.save(); g.strokeStyle = col; g.setLineDash(dash ? [5, 4] : []); g.lineWidth = 1.4;
@@ -324,7 +356,6 @@ function draw(cv, p, r, cs, o) {
     hline((r.c1h + r.c1l) / 2, C.sec, "50%", true);
   }
   if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key, true);
-  if (r.q2 && ["formed", "c3close"].includes(r.status) && r.q2.tspot != null) hline(r.q2.tspot, C.amber, "T-spot", true);
   const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" || r.status === "c3close" ? r.inv : r.sweep;
   if (sweepPx != null && !o.m1) hline(sweepPx, C.dn, "Sweep", true);
   // Model-1 marks (lower-timeframe chart)
@@ -339,12 +370,12 @@ function draw(cv, p, r, cs, o) {
       g.beginPath(); g.moveTo(X(iR0) - step / 2, y); g.lineTo(plotW + 6, y); g.stroke(); g.restore(); tags.push([y, mc, "Model-1"]);
       const hi2 = Math.max(...cs.slice(iR0, iR1 + 1).map(c => c[2])), lo2 = Math.min(...cs.slice(iR0, iR1 + 1).map(c => c[3]));
       g.save(); g.strokeStyle = C.amber; g.lineWidth = 2; g.strokeRect(X(iR0) - step / 2, Y(hi2) - 3, (iR1 - iR0 + 1) * step, Y(lo2) - Y(hi2) + 6); g.restore();
-      g.fillStyle = C.amber; g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif"; g.textAlign = "center";
+      g.fillStyle = C.amber; g.font = "bold 10px " + FONT; g.textAlign = "center";
       g.fillText("M1 candle", X(iR0) + (iR1 - iR0) * step / 2, m.dir === 1 ? Y(hi2) - 7 : Y(lo2) + 15); g.textAlign = "left";
     } else tags.push([Y(m.level), mc, "Model-1"]);
     if (iX >= 0) {             // sweep extreme
       const yx = Y(m.ext); g.fillStyle = C.dn; g.beginPath(); g.arc(X(iX), yx, 4, 0, 7); g.fill();
-      g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif"; g.textAlign = "center";
+      g.font = "bold 10px " + FONT; g.textAlign = "center";
       g.fillText("Sweep", X(iX), m.dir === 1 ? yx + 15 : yx - 8); g.textAlign = "left";
     }
     if (iC >= 0) {             // confirmation candle = entry
@@ -352,24 +383,34 @@ function draw(cv, p, r, cs, o) {
       g.fillStyle = mc; g.beginPath();
       if (up) { g.moveTo(X(iC), ya); g.lineTo(X(iC) - 6, ya + 10); g.lineTo(X(iC) + 6, ya + 10); }
       else { g.moveTo(X(iC), ya); g.lineTo(X(iC) - 6, ya - 10); g.lineTo(X(iC) + 6, ya - 10); }
-      g.fill(); g.font = "bold 11px -apple-system,Segoe UI,Roboto,sans-serif"; g.textAlign = "center";
+      g.fill(); g.font = "bold 11px " + FONT; g.textAlign = "center";
       g.fillText("Entry", X(iC), up ? ya + 22 : ya - 14); g.textAlign = "left";
       g.save(); g.strokeStyle = mc; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(X(iC), Y(c[4])); g.lineTo(plotW + 6, Y(c[4])); g.stroke(); g.restore();
     }
   }
-  g.font = "bold 12px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.ink; g.textAlign = "center";
-  (o.labels || []).forEach(L => {
-    if (L.at === "col") {         // label row above each candle (higher-timeframe chart)
-      g.save(); if (L.small) { g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; }
-      g.fillText(L.k, X(L.i), L.i % 2 ? 26 : 13); g.restore(); return;   // alternate rows so neighbours never overlap
-    }
-    if (L.at === "top" && L.small) { const xm = (X(L.i) - step / 2 + X(Math.min(L.j, cs.length) - 1) + step / 2) / 2;
-      g.save(); g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; g.fillText(L.k, xm, 13); g.restore(); return; }
-    if (L.at === "top") { const xm = (X(L.i) - step / 2 + X(Math.min(L.j, cs.length) - 1) + step / 2) / 2; g.fillText(L.k, xm, 13); }
-    else { const c = cs[L.i]; g.save(); if (L.small) { g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; }
-      g.fillText(L.k, X(L.i), r.dir === 1 ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(padT + 2, Y(c[2]) - 6)); g.restore(); }
-  });
-  g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec;
+  // role pills above the chart; a second row is used when neighbours would overlap
+  const placed = [];
+  const pill = (txt, xc, col, small, x1, x2) => {
+    g.font = (small ? "600 10px " : "bold 11px ") + FONT;
+    const w = g.measureText(txt).width + 10; let row = 0;
+    while (row < 1 && placed.some(q => q.row === row && Math.abs(q.x - xc) < (q.w + w) / 2 + 2)) row++;
+    placed.push({ x: xc, w, row });
+    const y = 4 + row * 18;
+    if (x1 != null && x2 - x1 > w + 6) {        // bracket under the pill for a span of candles
+      g.save(); g.strokeStyle = col; g.lineWidth = 1.2; g.beginPath(); g.moveTo(x1 + 2, y + 13); g.lineTo(x1 + 2, y + 16); g.lineTo(x2 - 2, y + 16); g.lineTo(x2 - 2, y + 13); g.stroke(); g.restore(); }
+    g.fillStyle = col; g.beginPath(); if (g.roundRect) g.roundRect(xc - w / 2, y, w, 15, 7); else g.rect(xc - w / 2, y, w, 15); g.fill();
+    g.fillStyle = "#fff"; g.textAlign = "center"; g.fillText(txt, xc, y + 11); g.textAlign = "left";
+  };
+  if (o.marks) {
+    if (M.c1 != null) pill("C1", X(M.c1), C.amber);
+    if (M.ins) { const k = M.ins[1] - M.ins[0] + 1; pill(k > 1 ? `inside ×${k}` : "in", (X(M.ins[0]) + X(M.ins[1])) / 2, C.sec, true, X(M.ins[0]) - step / 2, X(M.ins[1]) + step / 2); }
+    if (M.c2 != null) pill("C2", X(M.c2), C.dn);
+    if (M.c3 != null) pill("C3", X(M.c3), C.blue);
+    if (M.c4 != null) pill("C4", X(M.c4), C.blue);
+  }
+  (o.bands || []).forEach(b => { const x1 = X(b.i0) - step / 2, x2 = X(b.i1) + step / 2;
+    pill(b.k === "inside" ? "inside C1" : b.k, (x1 + x2) / 2, ROLE[b.k] || C.sec, b.k === "inside", x1, x2); });
+  g.font = "10px " + FONT; g.fillStyle = C.sec;
   const every = Math.max(1, Math.ceil(cs.length / 4));
   cs.forEach((c, i) => { if (i % every === 1 || every === 1) { const d = new Date(c[0] * 1000);
     const t = o.intraday ? d.toLocaleString([], { day: "2-digit", month: "short" }) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") : d.toLocaleDateString([], { day: "2-digit", month: "short" });
@@ -378,7 +419,7 @@ function draw(cv, p, r, cs, o) {
   tags.push([Y(r.price), C.blue, fmt(p, cs[last] ? cs[last][4] : r.price)]);
   tags.sort((a, b) => a[0] - b[0]);
   for (let k = 1; k < tags.length; k++) if (tags[k][0] - tags[k - 1][0] < 17) tags[k][0] = tags[k - 1][0] + 17;
-  g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif";
+  g.font = "bold 10px " + FONT;
   tags.forEach(([y, col, txt]) => { g.fillStyle = col; g.fillRect(plotW + 6, y - 8, padR, 16); g.fillStyle = "#fff"; g.fillText(txt, plotW + 10, y + 4); });
 }
 
