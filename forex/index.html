@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Forex CRT</title>
+<meta name="theme-color" content="#4C1D95">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Forex CRT">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --navy:#4C1D95; --blue:#6D28D9; --line:#E6E1F0; --sec:#6B6680; --bg:#F3EFFA; --green:#12A647; --red:#E62E2E; --amber:#C27C0E;
+    --card:#fff; --ink:#111; --ink2:#333; --tint:#F5F0FE; --bar:rgba(255,255,255,.94);
+    --gsoft:#E3F6EA; --rsoft:#FCE6E6; --asoft:#FBF0DC; --nsoft:#EFEDF4; color-scheme:light; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --navy:#2A1458; --blue:#8B5CF6; --line:#2E2840; --sec:#A49DB8; --bg:#110D1A;
+    --green:#34C46A; --red:#FF5A5A; --amber:#E9A93B; --card:#1A1526; --ink:#ECE8F4; --ink2:#C9C2D8; --tint:#241C36; --bar:rgba(26,21,38,.94);
+    --gsoft:#16301F; --rsoft:#3A1A1D; --asoft:#3A2C12; --nsoft:#231D30; color-scheme:dark; } }
+  :root[data-theme="dark"] { --navy:#2A1458; --blue:#8B5CF6; --line:#2E2840; --sec:#A49DB8; --bg:#110D1A;
+    --green:#34C46A; --red:#FF5A5A; --amber:#E9A93B; --card:#1A1526; --ink:#ECE8F4; --ink2:#C9C2D8; --tint:#241C36; --bar:rgba(26,21,38,.94);
+    --gsoft:#16301F; --rsoft:#3A1A1D; --asoft:#3A2C12; --nsoft:#231D30; color-scheme:dark; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  [hidden] { display:none !important; }
+  header { position:sticky; top:0; z-index:5; background:var(--navy); color:#fff; padding:calc(env(safe-area-inset-top,0px) + 12px) max(16px,env(safe-area-inset-right)) 12px max(16px,env(safe-area-inset-left)); display:flex; align-items:center; gap:10px; }
+  header h1 { font-size:19px; margin:0; font-weight:700; letter-spacing:.2px; flex:1; }
+  header .upd { font-size:12px; opacity:.85; text-align:right; }
+  header button { background:rgba(255,255,255,.16); color:#fff; border:0; border-radius:10px; padding:8px 12px; font-weight:600; font-size:14px; }
+  main { padding:12px max(12px,env(safe-area-inset-right)) calc(env(safe-area-inset-bottom,0px) + 30px) max(12px,env(safe-area-inset-left)); max-width:760px; margin:0 auto; display:grid; gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px; min-width:0; }
+  .seg { display:grid; grid-template-columns:repeat(4,1fr); background:var(--tint); border-radius:12px; padding:4px; gap:4px; }
+  .seg button { border:0; background:transparent; color:var(--sec); font-weight:700; font-size:14px; padding:9px 4px; border-radius:9px; }
+  .seg button.on { background:var(--blue); color:#fff; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .chip { border:1px solid var(--line); background:var(--card); color:var(--ink2); border-radius:999px; padding:6px 11px; font-size:13px; font-weight:600; }
+  .chip.on { background:var(--blue); border-color:var(--blue); color:#fff; }
+  .chip b { font-variant-numeric:tabular-nums; opacity:.8; margin-left:3px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--sec); margin:2px 2px 8px; font-weight:700; }
+  /* matrix */
+  .mx { width:100%; border-collapse:separate; border-spacing:0 4px; font-size:13px; }
+  .mx th { color:var(--sec); font-weight:700; font-size:12px; text-align:center; padding:0 2px; }
+  .mx th:first-child, .mx td:first-child { text-align:left; }
+  .mx td { text-align:center; padding:0 2px; }
+  .mx td:first-child { font-weight:700; }
+  .dot { display:inline-block; min-width:52px; padding:4px 6px; border-radius:8px; font-size:12px; font-weight:700; border:0; background:var(--nsoft); color:var(--sec); }
+  .s-formed.up { background:var(--green); color:#fff; } .s-formed.dn { background:var(--red); color:#fff; }
+  .s-forming.up { background:var(--gsoft); color:var(--green); } .s-forming.dn { background:var(--rsoft); color:var(--red); }
+  .s-sweeping { background:var(--asoft); color:var(--amber); }
+  .s-anticipated { background:var(--nsoft); color:var(--ink2); }
+  .s-done, .s-failed, .s-none { background:transparent; color:var(--sec); font-weight:500; }
+  /* list */
+  .row { display:grid; gap:6px; padding:12px; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+  .row .top { display:flex; align-items:center; gap:8px; }
+  .row .pair { font-weight:800; font-size:16px; }
+  .row .px { margin-left:auto; font-variant-numeric:tabular-nums; color:var(--ink2); font-weight:600; }
+  .badge { padding:3px 9px; border-radius:999px; font-size:12px; font-weight:800; }
+  .row .det { font-size:13px; color:var(--ink2); display:flex; flex-wrap:wrap; gap:4px 12px; }
+  .row .det b { font-variant-numeric:tabular-nums; color:var(--ink); }
+  .muted { color:var(--sec); font-size:13px; }
+  .empty { color:var(--sec); text-align:center; padding:18px 8px; }
+  /* detail */
+  .sheet { position:fixed; inset:0; background:rgba(10,6,20,.5); z-index:20; display:flex; align-items:flex-end; justify-content:center; }
+  .sheet .panel { background:var(--card); width:100%; max-width:760px; border-radius:18px 18px 0 0; padding:14px max(14px,env(safe-area-inset-right)) calc(env(safe-area-inset-bottom,0px) + 16px) max(14px,env(safe-area-inset-left)); max-height:92vh; overflow:auto; display:grid; gap:10px; }
+  .sheet .hd { display:flex; align-items:center; gap:8px; }
+  .sheet .hd h3 { margin:0; font-size:18px; flex:1; }
+  .x { border:0; background:var(--tint); color:var(--ink); border-radius:10px; padding:7px 12px; font-weight:700; }
+  canvas { width:100%; height:340px; display:block; border-radius:10px; background:var(--card); touch-action:pan-y; }
+  .lv { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:6px; }
+  .lv div { background:var(--tint); border-radius:10px; padding:8px 10px; font-size:12px; color:var(--sec); }
+  .lv b { display:block; color:var(--ink); font-size:15px; font-variant-numeric:tabular-nums; }
+  .legend { font-size:12px; color:var(--sec); line-height:1.5; }
+  button { cursor:pointer; font-family:inherit; }
+  button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Forex CRT</h1>
+  <div class="upd" id="upd">Loading…</div>
+  <button id="refresh" type="button" aria-label="Refresh">↻</button>
+</header>
+<main>
+  <div class="seg" id="tfSeg" role="tablist" aria-label="Timeframe">
+    <button data-tf="1H">1H</button><button data-tf="4H" class="on">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button>
+  </div>
+  <div class="chips" id="stChips" aria-label="Status filter"></div>
+  <div class="chips" id="dirChips" aria-label="Direction filter">
+    <button class="chip on" data-dir="0">Both</button><button class="chip" data-dir="1">▲ Bullish</button><button class="chip" data-dir="-1">▼ Bearish</button>
+  </div>
+  <section id="list" style="display:grid;gap:8px"></section>
+  <section class="card">
+    <h2>All timeframes</h2>
+    <div style="overflow-x:auto"><table class="mx" id="mx"></table></div>
+  </section>
+  <section class="card legend">
+    <b>Formed</b> – the last closed candle (C2) swept the previous candle's high/low and closed back inside. The current candle is C3, heading for the other side of C1.<br>
+    <b>Forming</b> – the current candle has swept the previous high/low and is back inside now. Becomes Formed if it closes there.<br>
+    <b>Sweeping</b> – the current candle is beyond the previous high/low, not back inside yet.<br>
+    <b>Anticipated</b> – no sweep yet, price is within <span id="nearTxt">25%</span> of the previous candle's high/low.<br>
+    Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Scanned on GitHub every 30 minutes while the market is open. Gold uses COMEX gold futures.
+  </section>
+</main>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="dTitle">
+    <div class="hd"><h3 id="dTitle">EURUSD</h3><span class="badge" id="dBadge"></span><button class="x" id="dClose" type="button">Close</button></div>
+    <div class="seg" id="dTf"><button data-tf="1H">1H</button><button data-tf="4H">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button></div>
+    <canvas id="cv" aria-label="Candle chart"></canvas>
+    <div class="lv" id="dLv"></div>
+    <div class="muted" id="dNote"></div>
+  </div>
+</div>
+<script src="app.js?v=1"></script>
+<script>
+if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+</script>
+</body>
+</html>
