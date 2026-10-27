@@ -98,12 +98,18 @@
     <h2>All timeframes</h2>
     <div style="overflow-x:auto"><table class="mx" id="mx"></table></div>
   </section>
+  <section class="card">
+    <h2>Live prices</h2>
+    <div class="muted" id="liveState">Checking…</div>
+    <label class="muted" style="display:flex;gap:8px;align-items:center;margin-top:8px"><input type="checkbox" id="liveOn"> Use live prices</label>
+    <div style="display:flex;gap:6px;margin-top:8px"><input id="liveUrl" style="flex:1;min-width:0;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--tint);color:var(--ink);font:inherit;font-size:13px" placeholder="https://forex-proxy.….workers.dev"><button class="chip on" id="liveSave" type="button">Save</button></div>
+  </section>
   <section class="card legend">
     <b>Formed</b> – the last closed candle (C2) swept the previous candle's high/low and closed back inside. The current candle is C3, heading for the other side of C1.<br>
     <b>Forming</b> – the current candle has swept the previous high/low and is back inside now. Becomes Formed if it closes there.<br>
     <b>Sweeping</b> – the current candle is beyond the previous high/low, not back inside yet.<br>
     <b>Anticipated</b> – no sweep yet, price is within <span id="nearTxt">25%</span> of the previous candle's high/low.<br>
-    Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Scanned on GitHub every 30 minutes while the market is open. Gold uses COMEX gold futures.
+    Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Live prices refresh every minute through your Cloudflare Worker; the GitHub scan is the backup. Gold uses COMEX gold futures.
   </section>
 </main>
 
@@ -120,7 +126,8 @@
     <div class="muted" id="dNote"></div>
   </div>
 </div>
-<script src="app.js?v=2"></script>
+<script src="live.js?v=3"></script>
+<script src="app.js?v=3"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

@@ -45,22 +45,42 @@ function label(r, short) {
 const cls = r => `s-${r.status} ${r.dir === 1 ? "up" : r.dir === -1 ? "dn" : ""}`;
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-/* ---------- load ---------- */
+/* ---------- load: live prices through the forex-proxy Worker, GitHub scan as backup ---------- */
+const DEFAULT_LIVE = "https://forex-proxy.mailztoganesh.workers.dev";
+let liveUrl = ls.get("fx-live-url", DEFAULT_LIVE), liveOn = ls.get("fx-live", true), liveOk = null, busy = false;
+async function loadGithub(force) {
+  const res = await fetch(`data/crt.json?t=${force ? Date.now() : Math.floor(Date.now() / 60000)}`, { cache: "no-cache" });
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
 async function load(force) {
+  if (busy) return; busy = true;
   try {
-    const res = await fetch(`data/crt.json?t=${force ? Date.now() : Math.floor(Date.now() / 60000)}`, { cache: "no-cache" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    data = await res.json();
+    let d = null;
+    if (liveOn && liveUrl && window.FXLive) {
+      try { d = await window.FXLive.load(liveUrl); liveOk = true; } catch (e) { liveOk = false; }
+    }
+    if (!d) d = await loadGithub(force);
+    data = d;
     $("#nearTxt").textContent = Math.round((data.near || .25) * 100) + "%";
-    render();
+    render(); liveStatus();
   } catch (e) {
-    $("#upd").textContent = data ? "Offline – showing last scan" : "Couldn’t load the scan. Pull to refresh later.";
-  }
+    $("#upd").textContent = data ? "Offline – showing last data" : "Couldn’t load prices. Try ↻ later.";
+  } finally { busy = false; }
 }
 function ago() {
   if (!data) return;
-  const m = Math.round((Date.now() - Date.parse(data.updated)) / 60000);
-  $("#upd").innerHTML = `Scanned ${m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.floor(m / 60) + "h " + (m % 60) + "m ago"}<br>${new Date(data.updated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  const t = new Date(data.updated);
+  if (data.live) { $("#upd").innerHTML = `● Live${data.missing ? ` (${data.missing} missing)` : ""}<br>${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`; return; }
+  const m = Math.round((Date.now() - t) / 60000);
+  $("#upd").innerHTML = `GitHub scan ${m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.floor(m / 60) + "h " + (m % 60) + "m ago"}<br>${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+function liveStatus() {
+  const el = $("#liveState"); if (!el) return;
+  el.textContent = !liveOn ? "Off – using the GitHub scan (can be hours late)." :
+    liveOk ? "Working – prices update every minute." :
+    liveOk === false ? "Not reachable – using the GitHub scan. Check the Worker is deployed at this address." : "Checking…";
+  $("#liveOn").checked = liveOn; $("#liveUrl").value = liveUrl;
 }
 
 /* ---------- render ---------- */
@@ -238,7 +258,8 @@ addEventListener("resize", () => { if (detail) drawDetail(); });
 try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (detail) drawDetail(); }); } catch (e) {}
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 setInterval(ago, 30000);
-setInterval(() => load(), 5 * 60000);
+setInterval(() => { if (!document.hidden) load(); }, liveOn ? 60000 : 5 * 60000);
+$("#liveSave").onclick = () => { liveUrl = $("#liveUrl").value.trim().replace(/\/+$/, ""); liveOn = $("#liveOn").checked; ls.set("fx-live-url", liveUrl); ls.set("fx-live", liveOn); liveOk = null; liveStatus(); load(true); };
 setInterval(() => { if (data) render(); }, 60000);   // countdowns
 load();
 })();
