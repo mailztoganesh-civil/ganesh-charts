@@ -12,7 +12,7 @@ const $ = s => document.querySelector(s);
 const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
              set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 
-let data = null, tf = ls.get("fx-tf", "4H"), st = ls.get("fx-st", "all"), dir = 0, detail = null;
+let view = ls.get("fx-view", "single"), data = null, tf = ls.get("fx-tf", "4H"), st = ls.get("fx-st", "all"), dir = 0, detail = null;
 
 /* ---------- formatting ---------- */
 const digits = p => p.pip >= 0.1 ? 2 : p.pip >= 0.01 ? 3 : 5;
@@ -136,63 +136,89 @@ function drawDetail() {
   $("#dNote").textContent = `Prices from Yahoo Finance (${p.src}). Scanned ${new Date(data.updated).toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}.`;
   chart(p, r);
 }
+const LTF_OF = { W: ["4H", "4H"], D: ["1H", "1H"], "4H": ["15m", "15m"], "1H": ["5m", "5m"] };
+function cMap(r, last) {
+  return r.status === "formed" || r.status === "done" || r.status === "failed" ? { C1: last - 2, C2: last - 1, C3: last } :
+         (r.status === "forming" || r.status === "sweeping") ? { C1: last - 1, C2: last } :
+         r.status === "anticipated" ? { C1: last - 1 } : {};
+}
 function chart(p, r) {
-  const cv = $("#cv"), dpr = window.devicePixelRatio || 1;
+  const split = view === "split" && LTF_OF[detail.tf];
+  $("#cvWrap2").hidden = !split;
+  $("#charts").classList.toggle("two", !!split);
+  const W = $("#cv").clientWidth;
+  const all = r.candles || []; const cs = all.slice(-Math.min(all.length, split ? (W < 500 ? 24 : 36) : (W < 500 ? 36 : 56)));
+  if (cs.length < 3) return;
+  const last = cs.length - 1, map = cMap(r, last);
+  $("#cap1").textContent = `${TF_NAME[detail.tf]} (higher timeframe)`;
+  draw($("#cv"), p, r, cs, {
+    from: map.C1 ?? last, intraday: detail.tf === "1H" || detail.tf === "4H",
+    labels: Object.entries(map).filter(([, i]) => i >= 0).map(([k, i]) => ({ i, k, at: "candle" })), seps: [] });
+  if (!split) return;
+  // lower timeframe: candles since the start of C1 (or the last 3 higher-TF candles)
+  const [key, name] = LTF_OF[detail.tf];
+  const src = key === "15m" || key === "5m" ? (p.ltf && p.ltf[key]) : (p.tf[key] && p.tf[key].candles);
+  $("#cap2").textContent = `${name} (lower timeframe) inside the ${TF_NAME[detail.tf]} candles`;
+  const keys = Object.keys(map).length ? Object.entries(map) : [["", last]];
+  const firstHtf = cs[Math.max(0, Math.min(...keys.map(([, i]) => i)))][0];
+  const lt = (src || []).filter(c => c[0] >= firstHtf);
+  if (lt.length < 3) { draw($("#cv2"), p, r, [], { empty: `No ${name} candles in this scan yet — they arrive with the next scan.` }); return; }
+  const idxOf = t => { const k = lt.findIndex(c => c[0] >= t); return k < 0 ? lt.length : k; };
+  const starts = keys.map(([k, i]) => ({ k, i: idxOf(cs[i][0]) }));
+  const labels = starts.filter(x => x.k).map((x, j) => ({ k: x.k, at: "top", i: x.i, j: j + 1 < starts.length ? starts[j + 1].i : lt.length }));
+  draw($("#cv2"), p, r, lt, { from: starts[0].i, intraday: true, labels, seps: starts.map(x => x.i) });
+}
+function draw(cv, p, r, cs, o) {
+  const dpr = window.devicePixelRatio || 1;
   const W = cv.clientWidth, H = cv.clientHeight;
   cv.width = W * dpr; cv.height = H * dpr;
   const g = cv.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
   const C = { ink: css("--ink"), sec: css("--sec"), line: css("--line"), up: css("--green"), dn: css("--red"), blue: css("--blue"), amber: css("--amber"), tint: css("--tint") };
-  const all = r.candles || []; const n = Math.min(all.length, W < 500 ? 36 : 56); const cs = all.slice(-n);
-  if (cs.length < 3) return;
-  const padR = 64, padB = 22, padT = 10, plotW = W - padR - 6, plotH = H - padB - padT;
+  if (o.empty) { g.fillStyle = C.sec; g.font = "13px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillText(o.empty, 10, H / 2); return; }
+  const last = cs.length - 1;
+  const padR = 64, padB = 22, padT = 18, plotW = W - padR - 6, plotH = H - padB - padT;
   const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l].filter(v => v != null);
   let hi = Math.max(...cs.map(c => c[2]), ...lv), lo = Math.min(...cs.map(c => c[3]), ...lv);
   const padY = (hi - lo) * 0.06 || hi * 0.001; hi += padY; lo -= padY;
-  const step = plotW / (cs.length + 5), bw = Math.max(2, step * 0.62);
+  const step = plotW / (cs.length + 4), bw = Math.max(1.5, step * 0.62);
   const X = i => 6 + step * (i + 0.5), Y = v => padT + (hi - v) / (hi - lo) * plotH;
-  // grid + price labels
   g.font = "11px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; g.strokeStyle = C.line; g.lineWidth = 1;
   for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4, y = Y(v); g.beginPath(); g.moveTo(0, y); g.lineTo(plotW + 6, y); g.stroke(); g.fillText(fmt(p, v), plotW + 10, y + 4); }
-  // which candles are C1/C2/C3
-  const last = cs.length - 1;
-  const map = r.status === "formed" || r.status === "done" || r.status === "failed" ? { C1: last - 2, C2: last - 1, C3: last } :
-              (r.status === "forming" || r.status === "sweeping") ? { C1: last - 1, C2: last } :
-              r.status === "anticipated" ? { C1: last - 1 } : {};
-  if (map.C1 != null && r.c1h != null) {           // C1 range box
-    g.fillStyle = C.tint; g.globalAlpha = .9;
-    g.fillRect(X(map.C1) - step / 2, Y(r.c1h), plotW + 6 - (X(map.C1) - step / 2), Y(r.c1l) - Y(r.c1h)); g.globalAlpha = 1;
-  }
-  // candles
+  const x0 = X(o.from) - step / 2;
+  if (r.c1h != null) { g.fillStyle = C.tint; g.globalAlpha = .9; g.fillRect(x0, Y(r.c1h), plotW + 6 - x0, Y(r.c1l) - Y(r.c1h)); g.globalAlpha = 1; }
+  // higher-timeframe candle dividers (lower-timeframe chart)
+  g.save(); g.strokeStyle = C.sec; g.setLineDash([3, 4]);
+  (o.seps || []).forEach(i => { const x = X(i) - step / 2; g.beginPath(); g.moveTo(x, padT - 4); g.lineTo(x, H - padB); g.stroke(); });
+  g.restore();
   cs.forEach((c, i) => {
     const up = c[4] >= c[1]; g.strokeStyle = g.fillStyle = up ? C.up : C.dn;
     g.beginPath(); g.moveTo(X(i), Y(c[2])); g.lineTo(X(i), Y(c[3])); g.stroke();
     const y1 = Y(Math.max(c[1], c[4])), y2 = Y(Math.min(c[1], c[4]));
     g.fillRect(X(i) - bw / 2, y1, bw, Math.max(1, y2 - y1));
   });
-  // levels
   const tags = [];
   const hline = (v, col, txt, dash) => { if (v == null) return; const y = Y(v); g.save(); g.strokeStyle = col; g.setLineDash(dash ? [5, 4] : []); g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(X(map.C1 ?? last) - step / 2, y); g.lineTo(plotW + 6, y); g.stroke(); g.restore(); tags.push([y, col, txt]); };
+    g.beginPath(); g.moveTo(x0, y); g.lineTo(plotW + 6, y); g.stroke(); g.restore(); tags.push([y, col, txt]); };
   if (r.t2 != null) hline(r.t2, C.blue, "T2");
   if (r.t1 != null) hline(r.t1, C.sec, "Mid", true);
   if (r.inv != null) hline(r.inv, C.dn, "Inv", true);
   if (r.level != null && r.status !== "formed") hline(r.level, C.amber, r.dir === 1 ? "Low" : "High", true);
-  // C labels
   g.font = "bold 12px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.ink; g.textAlign = "center";
-  Object.entries(map).forEach(([k, i]) => { if (i >= 0) { const c = cs[i]; const below = r.dir === 1; g.fillText(k, X(i), below ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(12, Y(c[2]) - 6)); } });
-  // time labels
+  (o.labels || []).forEach(L => {
+    if (L.at === "top") { const xm = (X(L.i) - step / 2 + X(Math.min(L.j, cs.length) - 1) + step / 2) / 2; g.fillText(L.k, xm, 13); }
+    else { const c = cs[L.i]; g.fillText(L.k, X(L.i), r.dir === 1 ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(padT + 2, Y(c[2]) - 6)); }
+  });
   g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec;
-  const every = Math.ceil(cs.length / 4);
+  const every = Math.max(1, Math.ceil(cs.length / 4));
   cs.forEach((c, i) => { if (i % every === 1 || every === 1) { const d = new Date(c[0] * 1000);
-    const t = detail.tf === "1H" || detail.tf === "4H" ? d.toLocaleString([], { day: "2-digit", month: "short" }) + " " + String(d.getHours()).padStart(2, "0") + "h" : d.toLocaleDateString([], { day: "2-digit", month: "short" });
+    const t = o.intraday ? d.toLocaleString([], { day: "2-digit", month: "short" }) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0") : d.toLocaleDateString([], { day: "2-digit", month: "short" });
     g.fillText(t, X(i), H - 6); } });
   g.textAlign = "left";
-  // price marker + level tags on the price axis (spread so they never overlap)
-  tags.push([Y(r.price), C.blue, fmt(p, r.price), true]);
+  tags.push([Y(r.price), C.blue, fmt(p, cs[last] ? cs[last][4] : r.price)]);
   tags.sort((a, b) => a[0] - b[0]);
   for (let k = 1; k < tags.length; k++) if (tags[k][0] - tags[k - 1][0] < 17) tags[k][0] = tags[k - 1][0] + 17;
   g.font = "bold 11px -apple-system,Segoe UI,Roboto,sans-serif";
-  tags.forEach(([y, col, txt, isPx]) => { g.fillStyle = col; g.fillRect(plotW + 6, y - 8, padR, 16); g.fillStyle = "#fff"; g.fillText(isPx ? txt : txt, plotW + 10, y + 4); });
+  tags.forEach(([y, col, txt]) => { g.fillStyle = col; g.fillRect(plotW + 6, y - 8, padR, 16); g.fillStyle = "#fff"; g.fillText(txt, plotW + 10, y + 4); });
 }
 
 /* ---------- events ---------- */
@@ -203,6 +229,9 @@ $("#dirChips").addEventListener("click", e => { const b = e.target.closest("butt
 document.addEventListener("click", e => { const b = e.target.closest("[data-sym]"); if (b && !b.closest("#sheet")) openDetail(b.dataset.sym, b.dataset.tf); });
 $("#dTf").addEventListener("click", e => { const b = e.target.closest("button"); if (!b || !detail) return; detail.tf = b.dataset.tf; drawDetail(); });
 $("#dClose").onclick = closeDetail;
+$("#dView").addEventListener("click", e => { const b = e.target.closest("button"); if (!b || !detail) return; view = b.dataset.v; ls.set("fx-view", view);
+  document.querySelectorAll("#dView button").forEach(x => x.classList.toggle("on", x === b)); drawDetail(); });
+document.querySelectorAll("#dView button").forEach(x => x.classList.toggle("on", x.dataset.v === view));
 $("#sheet").addEventListener("click", e => { if (e.target.id === "sheet") closeDetail(); });
 $("#refresh").onclick = () => load(true);
 addEventListener("resize", () => { if (detail) drawDetail(); });

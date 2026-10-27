@@ -65,6 +65,11 @@
   .sheet .hd { display:flex; align-items:center; gap:8px; }
   .sheet .hd h3 { margin:0; font-size:18px; flex:1; }
   .x { border:0; background:var(--tint); color:var(--ink); border-radius:10px; padding:7px 12px; font-weight:700; }
+  .seg.two { grid-template-columns:1fr 1fr; }
+  .charts { display:grid; gap:10px; }
+  .charts.two { grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); }
+  .charts.two canvas { height:300px; }
+  .cap { font-size:12px; font-weight:700; color:var(--sec); margin:0 2px 4px; }
   canvas { width:100%; height:340px; display:block; border-radius:10px; background:var(--card); touch-action:pan-y; }
   .lv { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:6px; }
   .lv div { background:var(--tint); border-radius:10px; padding:8px 10px; font-size:12px; color:var(--sec); }
@@ -106,12 +111,16 @@
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="dTitle">
     <div class="hd"><h3 id="dTitle">EURUSD</h3><span class="badge" id="dBadge"></span><button class="x" id="dClose" type="button">Close</button></div>
     <div class="seg" id="dTf"><button data-tf="1H">1H</button><button data-tf="4H">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button></div>
-    <canvas id="cv" aria-label="Candle chart"></canvas>
+    <div class="seg two" id="dView"><button data-v="single">Single chart</button><button data-v="split">HTF + LTF</button></div>
+    <div id="charts" class="charts">
+      <div><div class="cap" id="cap1"></div><canvas id="cv" aria-label="Higher timeframe chart"></canvas></div>
+      <div id="cvWrap2" hidden><div class="cap" id="cap2"></div><canvas id="cv2" aria-label="Lower timeframe chart"></canvas></div>
+    </div>
     <div class="lv" id="dLv"></div>
     <div class="muted" id="dNote"></div>
   </div>
 </div>
-<script src="app.js?v=1"></script>
+<script src="app.js?v=2"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

@@ -24,7 +24,8 @@ PAIRS = [  # (name, yahoo symbol, pip size)
     ("XAUUSD", "GC=F", 0.1),
 ]
 NEAR = 0.25          # "anticipated" when within 25% of the previous candle's range
-KEEP = 60            # candles per timeframe sent to the app for the chart
+KEEP = {"1H": 100, "4H": 100, "D": 60, "W": 60}   # candles per timeframe sent to the app
+LTF_KEEP = {"15m": 72, "5m": 54}                    # lower-timeframe candles for the HTF+LTF view
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forex", "data", "crt.json")
 NY = "America/New_York"
 TFS = {"1H": None, "4H": None, "D": None, "W": None}
@@ -117,16 +118,16 @@ def classify(df, tf, pip):
     dg = 3 if pip >= 0.01 else 5
     if pip >= 0.1: dg = 2
     res["candles"] = [[int(t.timestamp()), round(float(r.Open), dg), round(float(r.High), dg), round(float(r.Low), dg), round(float(r.Close), dg)]
-                      for t, r in df.tail(KEEP).iterrows()]
+                      for t, r in df.tail(KEEP[tf]).iterrows()]
     for k, v in list(res.items()):
         if isinstance(v, float) and not math.isnan(v):
             res[k] = round(v, dg + 1)
     return res
 
 
-def fetch_yahoo(symbol):
+def fetch_yahoo(symbol, interval="1h", period="1y"):
     import yfinance as yf
-    d = yf.download(symbol, period="1y", interval="1h", progress=False, auto_adjust=False)
+    d = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=False)
     if isinstance(d.columns, pd.MultiIndex):
         d.columns = d.columns.get_level_values(0)
     d = d[["Open", "High", "Low", "Close"]].dropna()
@@ -147,6 +148,16 @@ def main(loader=fetch_yahoo):
                 r = classify(df, tf, pip)
                 if r: row["tf"][tf] = r
             row["price"] = float(h.Close.iloc[-1])
+            if loader is fetch_yahoo:          # lower timeframes for the HTF + LTF view
+                dg = 2 if pip >= 0.1 else 3 if pip >= 0.01 else 5
+                row["ltf"] = {}
+                for iv in ("15m", "5m"):
+                    try:
+                        x = fetch_yahoo(ysym, iv, "5d").tail(LTF_KEEP[iv])
+                        row["ltf"][iv] = [[int(t.timestamp()), round(float(r.Open), dg), round(float(r.High), dg),
+                                           round(float(r.Low), dg), round(float(r.Close), dg)] for t, r in x.iterrows()]
+                    except Exception as e:
+                        print(name, iv, "failed:", e)
             out["pairs"].append(row)
             print(name, {k: (v["status"], v["dir"]) for k, v in row["tf"].items()})
         except Exception as e:  # keep going if one pair fails
