@@ -57,13 +57,40 @@ TF_HOURS = {"1H": 1, "4H": 4, "D": 24, "W": 120, "M": 0}
 LTF_FOR = {"M": "D", "W": "4H", "D": "1H", "4H": "15m", "1H": "5m"}   # Model-1 is looked for on this timeframe
 
 
-LOOK = 10   # how far back C1 (the range candle) can be
+LOOK = 10             # how far back C1 (the range candle) can be
+TWO_SIDED = "ambiguous"   # a C2 that sweeps both C1 boundaries is AMBIGUOUS; "outer-third" = old experimental rule
+ACTIVE = 2            # a formed CRT keeps its original C1/C2 pair through C3 and C4 (C2 up to 2 closed candles back)
+
+
+def ok_bar(c):
+    """OHLC sanity: finite, positive, high >= low and the high/low envelope the open/close."""
+    try:
+        o, h, l, cl = float(c[1]), float(c[2]), float(c[3]), float(c[4])
+    except (TypeError, ValueError, IndexError):
+        return False
+    return all(math.isfinite(v) for v in (o, h, l, cl)) and l > 0 and h >= l and h >= max(o, cl) and l <= min(o, cl)
+
+
+def clean_df(d):
+    """Sorted, one bar per timestamp (the later copy wins), malformed bars dropped."""
+    d = d[["Open", "High", "Low", "Close"]]
+    d = d[~d.index.duplicated(keep="last")].sort_index()
+    good = [ok_bar([0, r.Open, r.High, r.Low, r.Close]) for r in d.itertuples()]
+    return d[good]
+
+
+def clean_list(cs):
+    m = {}
+    for c in cs or []:
+        if c and isinstance(c[0], (int, float)) and math.isfinite(c[0]) and ok_bar(c):
+            m[c[0]] = list(c)
+    return [m[t] for t in sorted(m)]
 
 
 def mother(cs, i):
-    """C1 = the range candle: the furthest-back candle (up to LOOK) whose high-low range contains every candle
-    after it up to candle i. Candles inside that range (not only strict inside bars) keep C1 alive; C2 is then
-    the first candle to trade outside it."""
+    """C1 = the range candle for a C2 at i + 1: the furthest-back candle (up to LOOK) whose high-low range contains
+    every candle after it up to candle i (equal highs/lows count as inside). Only candles 0..i are used, so the choice
+    never depends on C2 or anything later. A candle that broke the range ends it: the next range is younger."""
     best = i; hi = cs[i][2]; lo = cs[i][3]
     for k in range(i - 1, max(-1, i - LOOK - 1), -1):
         if cs[k][2] >= hi and cs[k][3] <= lo:
@@ -72,88 +99,126 @@ def mother(cs, i):
     return best
 
 
+def identify(cs, j, live=False):
+    """Identification only (no screener filters): is candle j a C2 of the range candle before it? Uses cs[0..j].
+    code: FORMED | BREAKOUT | REJECTED | AMBIGUOUS | NO_SWEEP | INVALID_DATA (closed), FORMING | SWEEPING (live)."""
+    def out(code, reason, **x):
+        r = {"code": code, "reason": reason, "dir": 0, "c2": j}; r.update(x); return r
+    if j < 1 or j >= len(cs):
+        return out("INVALID_DATA", "not enough candles")
+    C2 = cs[j]
+    if not ok_bar(C2):
+        return out("INVALID_DATA", "C2 candle has bad OHLC data")
+    m = mother(cs, j - 1); C1 = cs[m]
+    base = dict(c1=m, c1t=C1[0], c2t=C2[0], c1h=C1[2], c1l=C1[3])
+    if not ok_bar(C1) or not C1[2] > C1[3]:
+        return out("INVALID_DATA", "C1 has bad data or no range", **base)
+    H1, L1, h2, l2, c2 = C1[2], C1[3], C2[2], C2[3], C2[4]
+    sl, sh = l2 < L1, h2 > H1                 # strict: touching the boundary is not a sweep
+    if not sl and not sh:
+        return out("NO_SWEEP", "touched C1's high/low without trading through it" if (l2 == L1 or h2 == H1) else "stayed inside C1", **base)
+    d = 1 if sl else -1; note = ""
+    if sl and sh:
+        pos = (c2 - l2) / (h2 - l2)
+        if TWO_SIDED != "outer-third" or not (pos >= 2 / 3 or pos <= 1 / 3):
+            return out("AMBIGUOUS", "swept both C1's high and low", **base)
+        d = 1 if pos >= 2 / 3 else -1; note = " (two-sided sweep, outer-third rule)"
+    base.update(dir=d, sweep=l2 if d == 1 else h2)
+    side = "low" if d == 1 else "high"; inside = L1 < c2 < H1
+    if live:
+        return out("FORMING" if inside else "SWEEPING",
+                   (f"swept C1's {side}, price back inside" if inside else f"trading beyond C1's {side}") + note, **base)
+    if inside:
+        return out("FORMED", f"swept C1's {side} and closed back inside" + note, **base)
+    if c2 == L1 or c2 == H1:
+        return out("REJECTED", f"swept C1's {side} but closed exactly on C1's edge (strict rule)", **base)
+    return out("BREAKOUT", f"swept C1's {side} and closed outside C1", **base)
+
+
 def classify(df, tf, pip):
     cs = [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in df.iterrows()]
+    return classify_cs(cs, tf, pip)
+
+
+def classify_cs(cs, tf, pip):
     n = len(cs)
     if n < 3:
         return None
     _, o0, h0, l0, price = cs[-1]
-    res = {"status": "none", "dir": 0}
-    # --- formed: C2 = the last closed candle, the first one to sweep C1's range, closed back inside ---
-    formed = None
-    m = mother(cs, n - 3)
-    _, _, H1, L1, _ = cs[m]; _, o2, h2, l2, c2 = cs[n - 2]
-    bull = l2 < L1 and L1 < c2 < H1
-    bear = h2 > H1 and L1 < c2 < H1
-    if bull and bear:                      # swept both sides: only counts when it closes in its outer third
-        rg = h2 - l2; pos = (c2 - l2) / rg if rg > 0 else 0.5
-        bull, bear = pos >= 2 / 3, pos <= 1 / 3
-    if bull or bear:
-        d = 1 if bull else -1
-        t2 = H1 if d == 1 else L1; t1 = (H1 + L1) / 2; inv = l2 if d == 1 else h2
-        hit2 = (h0 >= t2) if d == 1 else (l0 <= t2); hit1 = (h0 >= t1) if d == 1 else (l0 <= t1)
-        failed = (l0 < inv) if d == 1 else (h0 > inv)
+    def pack(i, **o):
+        r = {"code": i["code"], "reason": i["reason"], "c1t": i.get("c1t"), "c2t": i.get("c2t")}; r.update(o); return r
+    # --- formed: the oldest still-active pair is kept (C3 or C4 running); targets checked candle by candle ---
+    active = finished = None
+    for j in range(max(1, n - 1 - ACTIVE), n - 1):
+        i = identify(cs, j)
+        if i["code"] != "FORMED":
+            continue
+        d = i["dir"]; H1, L1 = i["c1h"], i["c1l"]; t2 = H1 if d == 1 else L1; t1 = (H1 + L1) / 2; inv = i["sweep"]
+        hit1 = hit2 = failed = False
+        for k in range(j + 1, n):
+            h, l = cs[k][2], cs[k][3]
+            if (h >= t1) if d == 1 else (l <= t1): hit1 = True
+            if (h >= t2) if d == 1 else (l <= t2): hit2 = True; break
+            if (l < inv) if d == 1 else (h > inv): failed = True; break
         risk = abs(price - inv)
-        formed = dict(status="formed", dir=d, t1=t1, t2=t2, inv=inv, c1h=H1, c1l=L1, sweep=inv, c1Back=n - 1 - m,
-                      hit1=bool(hit1), hit2=bool(hit2), failed=bool(failed),
-                      toT2=round((t2 - price) * d / pip, 1), rr=round(abs(t2 - price) / risk, 2) if risk > 0 else None)
-    # --- live: is the current candle the first to sweep C1's range? ---
-    live = None
-    m = mother(cs, n - 2)
-    _, _, H1, L1, _ = cs[m]
-    sl, sh = l0 < L1, h0 > H1
-    if sl or sh:
-        if sl and sh:
-            rg0 = h0 - l0; pos0 = (price - l0) / rg0 if rg0 > 0 else 0.5
-            d = 1 if pos0 >= 2 / 3 else -1 if pos0 <= 1 / 3 else 0
+        f = pack(i, status="formed", dir=d, t1=t1, t2=t2, inv=inv, c1h=H1, c1l=L1, sweep=inv, c1Back=n - 1 - i["c1"],
+                 c2Back=n - 1 - j, hit1=hit1, hit2=hit2, failed=failed,
+                 toT2=round((t2 - price) * d / pip, 1), rr=round(abs(t2 - price) / risk, 2) if risk > 0 else None)
+        if not hit2 and not failed:
+            active = active or f
         else:
-            d = 1 if sl else -1
-        if d:
-            lvl = L1 if d == 1 else H1
-            live = dict(status="forming" if L1 < price < H1 else "sweeping", dir=d, level=lvl, sweep=l0 if d == 1 else h0,
-                        t2=H1 if d == 1 else L1, t1=(H1 + L1) / 2, c1h=H1, c1l=L1, c1Back=n - 1 - m)
-    else:
-        rng = H1 - L1
-        if rng > 0:
-            dl, dh = (price - L1) / rng, (H1 - price) / rng
-            if dl <= NEAR or dh <= NEAR:
-                d = 1 if dl <= dh else -1
-                lvl = L1 if d == 1 else H1
-                live = dict(status="anticipated", dir=d, level=lvl, dist=round(abs(price - lvl) / pip, 1),
-                            c1h=H1, c1l=L1, t2=H1 if d == 1 else L1, c1Back=n - 1 - m)
-    # --- candle 3 closure (TTrades): C2 swept C1 but closed outside it; C3 closed back through C2's open ---
+            finished = f
+    # --- live: is the current candle the first to sweep C1's range? ---
+    lid = identify(cs, n - 1, live=True); live = None
+    if lid["code"] in ("FORMING", "SWEEPING"):
+        d = lid["dir"]; H1, L1 = lid["c1h"], lid["c1l"]
+        live = pack(lid, status=lid["code"].lower(), dir=d, level=L1 if d == 1 else H1, sweep=lid["sweep"],
+                    t2=H1 if d == 1 else L1, t1=(H1 + L1) / 2, c1h=H1, c1l=L1, c1Back=n - 1 - lid["c1"], c2Back=0)
+    elif lid["code"] == "NO_SWEEP":
+        H1, L1 = lid["c1h"], lid["c1l"]; rng = H1 - L1
+        dl, dh = (price - L1) / rng, (H1 - price) / rng
+        if dl <= NEAR or dh <= NEAR:
+            d = 1 if dl <= dh else -1; lvl = L1 if d == 1 else H1
+            live = dict(status="anticipated", code="ANTICIPATED",
+                        reason=f"price within {round(NEAR * 100)}% of C1's {'low' if d == 1 else 'high'}, no sweep yet",
+                        c1t=lid["c1t"], c2t=None, dir=d, level=lvl, dist=round(abs(price - lvl) / pip, 1),
+                        c1h=H1, c1l=L1, t2=H1 if d == 1 else L1, c1Back=n - 1 - lid["c1"])
+    # --- candle 3 closure (TTrades): C2 = BREAKOUT candle (not relabelled); C3 closed back through C2's open ---
     c3 = None
     if n >= 4:
-        m = mother(cs, n - 4)
-        _, _, ha, la, _ = cs[m]; _, ob, hb, lb, cb = cs[n - 3]; _, _, hc, lc, cc = cs[n - 2]
-        for d in (1, -1):
-            ok = (lb < la and cb < la and cc > ob and lc >= lb) if d == 1 else (hb > ha and cb > ha and cc < ob and hc <= hb)
-            if ok:
-                t2 = ha if d == 1 else la; inv = lb if d == 1 else hb
+        i = identify(cs, n - 3)
+        if i["code"] == "BREAKOUT":
+            d = i["dir"]; _, ob, hb, lb, _ = cs[n - 3]; _, _, hc, lc, cc = cs[n - 2]
+            if (cc > ob and lc >= lb) if d == 1 else (cc < ob and hc <= hb):
+                t2 = i["c1h"] if d == 1 else i["c1l"]; inv = lb if d == 1 else hb
                 hit2 = (h0 >= t2) if d == 1 else (l0 <= t2); failed = (l0 < inv) if d == 1 else (h0 > inv)
                 risk = abs(price - inv)
                 if not hit2 and not failed and (t2 - price) * d > 0:
-                    c3 = dict(status="c3close", dir=d, t1=(ha + la) / 2, t2=t2, inv=inv, c1h=ha, c1l=la, sweep=inv,
-                              c1Back=n - 1 - m, hit1=False, hit2=False, failed=False,
+                    c3 = pack(i, status="c3close", code="C3_CLOSURE", reason=f"C2 {i['reason']}; C3 closed back through C2's open",
+                              dir=d, t1=(i["c1h"] + i["c1l"]) / 2, t2=t2, inv=inv, c1h=i["c1h"], c1l=i["c1l"], sweep=inv,
+                              c1Back=n - 1 - i["c1"], c2Back=2, hit1=False, hit2=False, failed=False,
                               toT2=round((t2 - price) * d / pip, 1), rr=round(abs(t2 - price) / risk, 2) if risk > 0 else None)
-                break
-    # priority: active formed > forming > sweeping > C3 closure > formed (finished) > anticipated
-    if formed and not formed["failed"] and not formed["hit2"]:
-        res = formed
+    # priority: active formed > forming > sweeping > C3 closure > formed (finished) > anticipated > none (with reason)
+    if active:
+        res = active
         if live and live["status"] in ("forming", "sweeping"):
             res["also"] = live["status"]
     elif live and live["status"] in ("forming", "sweeping"):
         res = live
     elif c3:
         res = c3
-    elif formed:
-        res = formed
-        res["status"] = "done" if formed["hit2"] else "failed"
+    elif finished:
+        res = finished
+        res["status"] = "done" if finished["hit2"] else "failed"
     elif live:
         res = live
+    else:
+        i = lid if lid["code"] in ("AMBIGUOUS", "INVALID_DATA") else identify(cs, n - 2)
+        res = {"status": "none", "dir": 0, "code": i["code"],
+               "reason": ("current candle: " if i is lid else "last closed candle: ") + i["reason"]}
     res["price"] = price
-    start = df.index[-1]
-    res["end"] = int((start + pd.Timedelta(hours=TF_HOURS[tf])).timestamp() * 1000) if tf not in ("W", "M") else None
+    start = cs[-1][0]
+    res["end"] = (start + TF_HOURS[tf] * 3600) * 1000 if TF_HOURS.get(tf) else None
     dg = 3 if pip >= 0.01 else 5
     if pip >= 0.1: dg = 2
     res["candles"] = [[c[0]] + [round(v, dg) for v in c[1:]] for c in cs[-KEEP[tf]:]]
@@ -230,7 +295,7 @@ def c1_quality(lists, tf, r):
     cs = lists[tf]; n = len(cs); st = r["status"]
     if "c1Back" not in r or not r.get("dir"):
         return None
-    c1i = n - 1 - r["c1Back"]; c2i = n - 1 - C2_BACK.get(st, 0)
+    c1i = n - 1 - r["c1Back"]; c2i = n - 1 - (r["c2Back"] if r.get("c2Back") is not None else C2_BACK.get(st, 0))
     if c1i < 1:
         return None
     d = r["dir"]; t, o, h, l, c = cs[c1i]; rng = h - l
@@ -302,7 +367,7 @@ def c2_checks(lists, tf, r, pip):
         return None
     if "c1Back" not in r:
         return None
-    c1i = n - 1 - r["c1Back"]; c2i = n - 1 - C2_BACK.get(st, 0)
+    c1i = n - 1 - r["c1Back"]; c2i = n - 1 - (r["c2Back"] if r.get("c2Back") is not None else C2_BACK.get(st, 0))
     if c1i < 0 or c2i <= c1i:
         return None
     _, _, h1, l1, _ = cs[c1i]; t2c, o2, h2, l2, c2 = cs[c2i]
@@ -349,13 +414,9 @@ def add_model1(row, tfs, ltf_lists):
         st = r.get("status")
         if st not in ("formed", "forming", "sweeping", "done", "c3close") or LTF_FOR.get(tf) not in lists:
             continue
-        cs = r["candles"]
-        if st == "c3close":
-            t0, lvl = cs[-3][0], (r["c1l"] if r["dir"] == 1 else r["c1h"])
-        elif st in ("formed", "done"):
-            t0, lvl = cs[-2][0], (r["c1l"] if r["dir"] == 1 else r["c1h"])
-        else:
-            t0, lvl = cs[-1][0], r["level"]
+        # Model-1 starts at the scanner's C2 candle (c2t), never at a position re-derived from the status
+        t0 = r["c2t"]
+        lvl = r["level"] if st in ("forming", "sweeping") else (r["c1l"] if r["dir"] == 1 else r["c1h"])
         m = model1(lists[LTF_FOR[tf]], r["dir"], t0, lvl, r["t2"], row["pip"])
         if m:
             for k in ("ext", "level", "entry", "target"):
@@ -379,6 +440,8 @@ def main(loader=fetch_yahoo):
     for name, ysym, pip in PAIRS:
         try:
             h = loader(ysym if loader is fetch_yahoo else name)
+            if h is not None:
+                h = clean_df(h)
             if h is None or len(h) < 50:
                 print(name, "no data"); continue
             tfs = build(h)
@@ -394,7 +457,7 @@ def main(loader=fetch_yahoo):
                 for iv in ("15m", "5m"):
                     try:
                         x = fetch_yahoo(ysym, iv, "5d")
-                        ltf_full[iv] = [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in x.iterrows()]
+                        ltf_full[iv] = clean_list([[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in x.iterrows()])
                         row["ltf"][iv] = [[c[0]] + [round(v, dg) for v in c[1:]] for c in ltf_full[iv][-LTF_KEEP[iv]:]]
                     except Exception as e:
                         print(name, iv, "failed:", e)

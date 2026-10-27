@@ -55,9 +55,23 @@ function build(bars) {
 
 function round(v, dg) { const f = Math.pow(10, dg); return Math.round(v * f) / f; }
 
-const LOOK = 10;   // how far back C1 (the range candle) can be
-/* C1 = the range candle: the furthest-back candle (up to LOOK) whose high-low range contains every candle after it
- * up to candle i. Candles inside that range keep C1 alive; C2 is the first candle to trade outside it. */
+const LOOK = 10;            // how far back C1 (the range candle) can be
+const TWO_SIDED = "ambiguous";   // a C2 that sweeps both C1 boundaries is AMBIGUOUS; "outer-third" = old experimental rule
+const ACTIVE = 2;          // a formed CRT keeps its original C1/C2 pair through C3 and C4 (C2 up to 2 closed candles back)
+
+/* OHLC sanity: finite, positive, high >= low and the high/low envelope the open/close. */
+const okBar = c => !!c && [c[1], c[2], c[3], c[4]].every(Number.isFinite) && c[3] > 0 && c[2] >= c[3] &&
+  c[2] >= Math.max(c[1], c[4]) && c[3] <= Math.min(c[1], c[4]);
+/* Raw bars [{t,o,h,l,c}] -> sorted, one bar per timestamp (the later copy wins), malformed bars dropped. */
+function clean(bars) {
+  const m = new Map();
+  for (const b of bars || []) if (b && Number.isFinite(b.t) && okBar([b.t, b.o, b.h, b.l, b.c])) m.set(b.t, b);
+  return [...m.values()].sort((x, y) => x.t - y.t);
+}
+
+/* C1 = the range candle for a C2 at i + 1: the furthest-back candle (up to LOOK) whose high-low range contains every
+ * candle after it up to candle i (equal highs/lows count as inside). Only candles 0..i are used, so the choice can
+ * never depend on C2 or anything later. A candle that broke the range ends that range: the next range is younger. */
 function mother(cs, i) {
   let best = i, hi = cs[i][2], lo = cs[i][3];
   for (let k = i - 1; k >= Math.max(0, i - LOOK); k--) {
@@ -66,70 +80,101 @@ function mother(cs, i) {
   }
   return best;
 }
+/* Identification only (no screener filters): is candle j a C2 of the range candle before it?
+ * Uses candles 0..j only. live = candle j is still open (its close is the current price).
+ * code: FORMED | BREAKOUT | REJECTED | AMBIGUOUS | NO_SWEEP | INVALID_DATA (closed), FORMING | SWEEPING (live). */
+function identify(cs, j, live) {
+  const out = (code, reason, x) => Object.assign({ code, reason, dir: 0, c2: j }, x || {});
+  if (j < 1 || j >= cs.length) return out("INVALID_DATA", "not enough candles");
+  const C2 = cs[j];
+  if (!okBar(C2)) return out("INVALID_DATA", "C2 candle has bad OHLC data");
+  const m = mother(cs, j - 1), C1 = cs[m];
+  const base = { c1: m, c1t: C1[0], c2t: C2[0], c1h: C1[2], c1l: C1[3] };
+  if (!okBar(C1) || !(C1[2] > C1[3])) return out("INVALID_DATA", "C1 has bad data or no range", base);
+  const H1 = C1[2], L1 = C1[3], h2 = C2[2], l2 = C2[3], c2 = C2[4];
+  const sl = l2 < L1, sh = h2 > H1;          // strict: touching the boundary is not a sweep
+  if (!sl && !sh) return out("NO_SWEEP", l2 === L1 || h2 === H1 ? "touched C1's high/low without trading through it" : "stayed inside C1", base);
+  let d = sl ? 1 : -1, note = "";
+  if (sl && sh) {
+    const pos = (c2 - l2) / (h2 - l2);
+    if (TWO_SIDED !== "outer-third" || !(pos >= 2 / 3 || pos <= 1 / 3)) return out("AMBIGUOUS", "swept both C1's high and low", base);
+    d = pos >= 2 / 3 ? 1 : -1; note = " (two-sided sweep, outer-third rule)";
+  }
+  base.dir = d; base.sweep = d === 1 ? l2 : h2;
+  const side = d === 1 ? "low" : "high", inside = L1 < c2 && c2 < H1;
+  if (live) return out(inside ? "FORMING" : "SWEEPING", (inside ? `swept C1's ${side}, price back inside` : `trading beyond C1's ${side}`) + note, base);
+  if (inside) return out("FORMED", `swept C1's ${side} and closed back inside` + note, base);
+  if (c2 === L1 || c2 === H1) return out("REJECTED", `swept C1's ${side} but closed exactly on C1's edge (strict rule)`, base);
+  return out("BREAKOUT", `swept C1's ${side} and closed outside C1`, base);
+}
 function classify(cs, tf, pip) {
   const n = cs.length;
   if (n < 3) return null;
-  const [, o0, h0, l0, price] = cs[n - 1];
-  let res = { status: "none", dir: 0 };
-  // formed: C2 = the last closed candle, the first one to sweep C1's range, closed back inside
-  let formed = null;
-  let m = mother(cs, n - 3);
-  { const [, , H1, L1] = cs[m], [, o2, h2, l2, c2] = cs[n - 2];
-    let bull = l2 < L1 && L1 < c2 && c2 < H1, bear = h2 > H1 && L1 < c2 && c2 < H1;
-    if (bull && bear) { const rg = h2 - l2, pos = rg > 0 ? (c2 - l2) / rg : 0.5; bull = pos >= 2 / 3; bear = pos <= 1 / 3; }
-    if (bull || bear) {
-      const d = bull ? 1 : -1, t2 = d === 1 ? H1 : L1, t1 = (H1 + L1) / 2, inv = d === 1 ? l2 : h2;
-      const hit2 = d === 1 ? h0 >= t2 : l0 <= t2, hit1 = d === 1 ? h0 >= t1 : l0 <= t1, failed = d === 1 ? l0 < inv : h0 > inv;
-      const risk = Math.abs(price - inv);
-      formed = { status: "formed", dir: d, t1, t2, inv, c1h: H1, c1l: L1, sweep: inv, c1Back: n - 1 - m, hit1, hit2, failed,
-        toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null };
-    } }
+  const [, , h0, l0, price] = cs[n - 1];
+  const pack = (id, o) => Object.assign({ code: id.code, reason: id.reason, c1t: id.c1t, c2t: id.c2t }, o);
+  // formed: C2 closed and closed back inside C1. The oldest still-active pair (C3 or C4 running) is kept, so a later
+  // candle never replaces the original C1/C2. Target / failure are checked on every candle after C2, in order.
+  let active = null, finished = null;
+  for (let j = Math.max(1, n - 1 - ACTIVE); j <= n - 2; j++) {
+    const id = identify(cs, j, false);
+    if (id.code !== "FORMED") continue;
+    const d = id.dir, H1 = id.c1h, L1 = id.c1l, t2 = d === 1 ? H1 : L1, t1 = (H1 + L1) / 2, inv = id.sweep;
+    let hit1 = false, hit2 = false, failed = false;
+    for (let k = j + 1; k < n; k++) {
+      const h = cs[k][2], l = cs[k][3];
+      if (d === 1 ? h >= t1 : l <= t1) hit1 = true;
+      if (d === 1 ? h >= t2 : l <= t2) { hit2 = true; break; }
+      if (d === 1 ? l < inv : h > inv) { failed = true; break; }
+    }
+    const risk = Math.abs(price - inv);
+    const f = pack(id, { status: "formed", dir: d, t1, t2, inv, c1h: H1, c1l: L1, sweep: inv, c1Back: n - 1 - id.c1, c2Back: n - 1 - j,
+      hit1, hit2, failed, toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null });
+    if (!hit2 && !failed) { if (!active) active = f; }
+    else finished = f;                       // the most recent finished one
+  }
   // live: is the current candle the first to sweep C1's range?
+  const lid = identify(cs, n - 1, true);
   let live = null;
-  m = mother(cs, n - 2);
-  { const [, , H1, L1] = cs[m];
-    const sl = l0 < L1, sh = h0 > H1;
-    if (sl || sh) {
-      let d;
-      if (sl && sh) { const rg0 = h0 - l0, pos0 = rg0 > 0 ? (price - l0) / rg0 : 0.5; d = pos0 >= 2 / 3 ? 1 : pos0 <= 1 / 3 ? -1 : 0; }
-      else d = sl ? 1 : -1;
-      if (d) {
-        const level = d === 1 ? L1 : H1;
-        live = { status: L1 < price && price < H1 ? "forming" : "sweeping", dir: d, level, sweep: d === 1 ? l0 : h0,
-          t2: d === 1 ? H1 : L1, t1: (H1 + L1) / 2, c1h: H1, c1l: L1, c1Back: n - 1 - m };
-      }
-    } else {
-      const rng = H1 - L1;
-      if (rng > 0) {
-        const dl = (price - L1) / rng, dh = (H1 - price) / rng;
-        if (dl <= NEAR || dh <= NEAR) {
-          const d = dl <= dh ? 1 : -1, level = d === 1 ? L1 : H1;
-          live = { status: "anticipated", dir: d, level, dist: round(Math.abs(price - level) / pip, 1), c1h: H1, c1l: L1, t2: d === 1 ? H1 : L1, c1Back: n - 1 - m };
-        }
-      }
-    } }
-  // candle 3 closure (TTrades): C2 swept C1 but closed outside it; C3 closed back through C2's open
+  if (lid.code === "FORMING" || lid.code === "SWEEPING") {
+    const d = lid.dir, H1 = lid.c1h, L1 = lid.c1l;
+    live = pack(lid, { status: lid.code.toLowerCase(), dir: d, level: d === 1 ? L1 : H1, sweep: lid.sweep,
+      t2: d === 1 ? H1 : L1, t1: (H1 + L1) / 2, c1h: H1, c1l: L1, c1Back: n - 1 - lid.c1, c2Back: 0 });
+  } else if (lid.code === "NO_SWEEP") {
+    const H1 = lid.c1h, L1 = lid.c1l, rng = H1 - L1;
+    const dl = (price - L1) / rng, dh = (H1 - price) / rng;
+    if (dl <= NEAR || dh <= NEAR) {
+      const d = dl <= dh ? 1 : -1, level = d === 1 ? L1 : H1;
+      live = { status: "anticipated", code: "ANTICIPATED", reason: `price within ${Math.round(NEAR * 100)}% of C1's ${d === 1 ? "low" : "high"}, no sweep yet`,
+        c1t: lid.c1t, c2t: null, dir: d, level, dist: round(Math.abs(price - level) / pip, 1), c1h: H1, c1l: L1, t2: d === 1 ? H1 : L1, c1Back: n - 1 - lid.c1 };
+    }
+  }
+  // candle 3 closure (TTrades): C2 swept C1 but closed outside it (BREAKOUT); C3 closed back through C2's open
+  // without a new extreme. C2 stays the breakout candle - it is not relabelled.
   let c3 = null;
   if (n >= 4) {
-    m = mother(cs, n - 4);
-    const [, , ha, la] = cs[m], [, ob, hb, lb, cb] = cs[n - 3], [, , hc, lc, cc] = cs[n - 2];
-    for (const d of [1, -1]) {
-      const ok = d === 1 ? (lb < la && cb < la && cc > ob && lc >= lb) : (hb > ha && cb > ha && cc < ob && hc <= hb);
-      if (ok) {
-        const t2 = d === 1 ? ha : la, inv = d === 1 ? lb : hb;
+    const id = identify(cs, n - 3, false);
+    if (id.code === "BREAKOUT") {
+      const d = id.dir, [, ob, hb, lb] = cs[n - 3], [, , hc, lc, cc] = cs[n - 2];
+      if (d === 1 ? (cc > ob && lc >= lb) : (cc < ob && hc <= hb)) {
+        const t2 = d === 1 ? id.c1h : id.c1l, inv = d === 1 ? lb : hb;
         const hit2 = d === 1 ? h0 >= t2 : l0 <= t2, failed = d === 1 ? l0 < inv : h0 > inv, risk = Math.abs(price - inv);
         if (!hit2 && !failed && (t2 - price) * d > 0)
-          c3 = { status: "c3close", dir: d, t1: (ha + la) / 2, t2, inv, c1h: ha, c1l: la, sweep: inv, c1Back: n - 1 - m, hit1: false, hit2: false, failed: false,
-                 toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null };
-        break;
+          c3 = pack(id, { status: "c3close", code: "C3_CLOSURE", reason: `C2 ${id.reason}; C3 closed back through C2's open`, dir: d,
+            t1: (id.c1h + id.c1l) / 2, t2, inv, c1h: id.c1h, c1l: id.c1l, sweep: inv, c1Back: n - 1 - id.c1, c2Back: 2,
+            hit1: false, hit2: false, failed: false, toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null });
       }
     }
   }
-  if (formed && !formed.failed && !formed.hit2) { res = formed; if (live && (live.status === "forming" || live.status === "sweeping")) res.also = live.status; }
+  let res;
+  if (active) { res = active; if (live && (live.status === "forming" || live.status === "sweeping")) res.also = live.status; }
   else if (live && (live.status === "forming" || live.status === "sweeping")) res = live;
   else if (c3) res = c3;
-  else if (formed) { res = formed; res.status = formed.hit2 ? "done" : "failed"; }
+  else if (finished) { res = finished; res.status = finished.hit2 ? "done" : "failed"; }
   else if (live) res = live;
+  else {                                       // no setup: say why (current candle if it swept both sides, else last closed)
+    const id = lid.code === "AMBIGUOUS" || lid.code === "INVALID_DATA" ? lid : identify(cs, n - 2, false);
+    res = { status: "none", dir: 0, code: id.code, reason: (id === lid ? "current candle: " : "last closed candle: ") + id.reason };
+  }
   res.price = price;
   const start = cs[cs.length - 1][0];
   res.end = TF_HOURS[tf] ? (start + TF_HOURS[tf] * H) * 1000 : null;
@@ -182,7 +227,7 @@ const lastAtOrBefore = (S, t) => { let k = -1; for (let i = 0; i < S.length; i++
 function c1Quality(lists, tf, r) {
   const cs = lists[tf], n = cs.length, st = r.status;
   if (r.c1Back == null || !r.dir) return null;
-  const c1i = n - 1 - r.c1Back, c2i = n - 1 - (C2_BACK[st] || 0);
+  const c1i = n - 1 - r.c1Back, c2i = n - 1 - (r.c2Back ?? C2_BACK[st] ?? 0);
   if (c1i < 1) return null;
   const d = r.dir, [t, , h, l] = cs[c1i], rng = h - l;
   const prev = cs.slice(Math.max(0, c1i - 20), c1i);
@@ -233,7 +278,7 @@ function c2Checks(lists, tf, r, pip) {
   const cs = lists[tf], n = cs.length, st = r.status, d = r.dir;
   if (!d) return null;
   if (r.c1Back == null) return null;
-  const c1i = n - 1 - r.c1Back, c2i = n - 1 - (C2_BACK[st] || 0);
+  const c1i = n - 1 - r.c1Back, c2i = n - 1 - (r.c2Back ?? C2_BACK[st] ?? 0);
   if (c1i < 0 || c2i <= c1i) return null;
   const [, , h1, l1] = cs[c1i], [t2c, o2, h2, l2, c2] = cs[c2i], rng = h1 - l1;
   const depth = d === 1 ? l1 - l2 : h2 - h1;
@@ -264,9 +309,8 @@ function addModel1(row, tfs, ltfFull) {
   }
   for (const [tf, r] of Object.entries(row.tf)) {
     if (!["formed", "forming", "sweeping", "done", "c3close"].includes(r.status) || !lists[LTF_FOR[tf]]) continue;
-    const cs = r.candles;
-    const [t0, lvl] = r.status === "c3close" ? [cs[cs.length - 3][0], r.dir === 1 ? r.c1l : r.c1h] :
-      r.status === "formed" || r.status === "done" ? [cs[cs.length - 2][0], r.dir === 1 ? r.c1l : r.c1h] : [cs[cs.length - 1][0], r.level];
+    // Model-1 starts at the scanner's C2 candle (c2t), never at a position re-derived from the status
+    const [t0, lvl] = r.status === "forming" || r.status === "sweeping" ? [r.c2t, r.level] : [r.c2t, r.dir === 1 ? r.c1l : r.c1h];
     const m = model1(lists[LTF_FOR[tf]], r.dir, t0, lvl, r.t2, row.pip);
     if (m) { for (const k of ["ext", "level", "entry", "target"]) if (typeof m[k] === "number") m[k] = round(m[k], dg + 1); r.m1 = m; }
   }
@@ -279,7 +323,7 @@ async function get(base, sym, interval, range) {
   if (!r.ok) throw new Error(`${sym} ${interval}: HTTP ${r.status}`);
   const d = await r.json();
   if (d.error) throw new Error(`${sym} ${interval}: ${d.error}`);
-  return d.t.map((t, i) => ({ t, o: d.o[i], h: d.h[i], l: d.l[i], c: d.c[i] }));
+  return clean(d.t.map((t, i) => ({ t, o: d.o[i], h: d.h[i], l: d.l[i], c: d.c[i] })));
 }
 async function pair(base, [name, ysym, pip]) {
   const fresh = !store[ysym];
@@ -306,5 +350,5 @@ async function load(base) {
   if (!pairs.length) throw new Error("live data unavailable");
   return { updated: new Date().toISOString(), near: NEAR, pairs, live: true, missing: rows.length - pairs.length };
 }
-window.FXLive = { load, build, classify, model1, addModel1, c1Quality, PAIRS };
+window.FXLive = { load, build, classify, identify, mother, clean, okBar, model1, addModel1, c1Quality, c2Checks, PAIRS, LOOK, ACTIVE };
 })();

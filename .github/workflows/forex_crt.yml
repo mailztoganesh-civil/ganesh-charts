@@ -7,6 +7,9 @@ on:
     paths:
       - ".github/workflows/forex_crt.yml"
       - "scripts/forex_crt.py"
+      - "scripts/test_forex_crt.py"
+      - "forex/live.js"
+      - "forex/tests/**"
   schedule:
     - cron: "4,34 * * * 1-5"
     - cron: "4,34 21-23 * * 0"
@@ -29,6 +32,10 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install --upgrade yfinance pandas
+      - name: C1/C2 identification tests (Python scanner and phone engine)
+        run: |
+          python -m unittest scripts/test_forex_crt.py
+          node forex/tests/run_tests.js
       - name: Scan
         run: python -u scripts/forex_crt.py
       - name: Commit forex/data/crt.json

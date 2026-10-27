@@ -35,14 +35,14 @@ function endOf(r, t) {
 function label(r, short) {
   const up = r.dir === 1, a = up ? "▲" : "▼";
   switch (r.status) {
-    case "formed": return short ? `${a} C3` : `${a} Formed`;
+    case "formed": return short ? `${a} ${r.c2Back === 2 ? "C4" : "C3"}` : `${a} Formed${r.c2Back === 2 ? " · C4" : ""}`;
     case "c3close": return short ? `${a} C4` : `${a} C3 closure`;
     case "forming": return short ? `${a} C2` : `${a} C2 forming`;
     case "sweeping": return short ? `${a} Swp` : up ? "▲ Sweeping low" : "▼ Sweeping high";
     case "anticipated": return short ? `${a} Near` : up ? "▲ Near low" : "▼ Near high";
     case "done": return short ? "hit" : "✓ Target hit";
     case "failed": return short ? "fail" : "✕ Failed";
-    default: return "–";
+    default: return short ? "–" : r.code && CODE_NAME[r.code] ? "– " + CODE_NAME[r.code] : "–";
   }
 }
 const cls = r => `s-${r.status} ${r.dir === 1 ? "up" : r.dir === -1 ? "dn" : ""}`;
@@ -121,6 +121,19 @@ function passes(r) {            // C1 rules chosen in settings
   const c1ok = (!req.c1 || (q.size && !q.inside)) && (!req.key || !!q.key) && (!req.bias || q.bias === true);
   const c2ok = !swept || !q2 || ((!req.sweep || q2.sweep) && (!req.reject || q2.reject) && (!req.kz || q2.kz !== false));
   return c1ok && c2ok;
+}
+const CODE_NAME = { FORMED: "C2 confirmed", FORMING: "C2 forming (open)", SWEEPING: "C2 sweeping (open)", ANTICIPATED: "Near C1, no sweep",
+  C3_CLOSURE: "C3 closure", BREAKOUT: "Rejected – closed outside C1", REJECTED: "Rejected – closed on C1's edge",
+  AMBIGUOUS: "Ambiguous – swept both sides", NO_SWEEP: "No sweep", INVALID_DATA: "Bad data" };
+function failReasons(r) {      // which of the screener rules a setup fails (identification itself is unchanged)
+  const q = r.q || {}, q2 = r.q2, out = [], swept = ["formed", "c3close", "forming", "sweeping"].includes(r.status);
+  if (!r.q) { if (req.c1 || req.key || req.bias) out.push("no C1 checks"); return out; }
+  if (req.c1 && !(q.size && !q.inside)) out.push(q.inside ? "C1 is an inside bar" : "C1 too small");
+  if (req.key && !q.key) out.push("no key level");
+  if (req.bias && q.bias !== true) out.push("HTF bias not with it");
+  if (swept && q2) { if (req.sweep && !q2.sweep) out.push("sweep too small/deep"); if (req.reject && !q2.reject) out.push("weak rejection close");
+    if (req.kz && q2.kz === false) out.push("outside kill zone"); }
+  return out;
 }
 function match(r, s, ignoreRules) {
   if (dir !== 0 && r.dir !== dir) return false;
@@ -208,14 +221,14 @@ function drawDetail() {
   // levels
   const L = [["Price", fmt(p, r.price)]];
   if (r.c1h != null) L.push(["C1 high", fmt(p, r.c1h)], ["C1 low", fmt(p, r.c1l)]);
-  const cs0 = r.candles || [], mp = cMap(r, cs0.length - 1), when = i => {
+  const cs0 = r.candles || [], mp = cMap(r, cs0.length - 1, cs0), when = i => {
     const c = cs0[i]; if (!c) return "–"; const d = new Date(c[0] * 1000), t = detail.tf;
     if (t === "M") return d.toLocaleDateString([], { month: "short", year: "numeric" });
     if (t === "W") return "wk of " + d.toLocaleDateString([], { day: "2-digit", month: "short" });
     if (t === "D") return d.toLocaleDateString([], { weekday: "short", day: "2-digit", month: "short" });
     return d.toLocaleString([], { day: "2-digit", month: "short" }) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   if (mp.C1 != null && mp.C1 >= 0) L.push(["C1 candle", when(mp.C1)]);
-  if (mp.C2 != null && mp.C2 >= 0) L.push(["C2 candle (sweep)", when(mp.C2) + (C2_BACK[r.status] ? "" : " · live")]);
+  if (mp.C2 != null && mp.C2 >= 0) L.push(["C2 candle (sweep)", when(mp.C2) + (c2BackOf(r) ? "" : " · still open")]);
   if (insideCount(r)) L.push(["Inside candles", insideCount(r)]);
   if (r.t1 != null) L.push(["Mid (T1)", fmt(p, r.t1) + (r.hit1 ? " ✓" : "")]);
   if (r.t2 != null) L.push(["Target (T2)", fmt(p, r.t2)]);
@@ -223,6 +236,8 @@ function drawDetail() {
   if (r.t2 != null) L.push(["Pips to T2", pips(p, r.price, r.t2).toFixed(1)]);
   if (r.rr != null) L.push(["R:R from here", r.rr]);
   L.push(["Candle closes in", left(endOf(r, detail.tf))]);
+  if (r.code) L.push(["Identification", (CODE_NAME[r.code] || r.code) + (r.dir ? (r.dir === 1 ? " · bullish" : " · bearish") : "")], ["Why", r.reason || "–"]);
+  if (SETUP.includes(r.status) && !passes(r)) L.push(["Screener", "hidden by your rules: " + failReasons(r).join(", ")]);
   if (r.q) L.push(["Grade", grade(r) + (r.q.key ? " · " + r.q.key : "")]);
   if (r.q2 && ["formed", "c3close", "forming", "sweeping"].includes(r.status)) L.push(["C2 sweep", r.q2.depth + " pips" + (r.q2.sweep ? " ✓" : " ✗")], ["T-spot (C2 wick 50%)", fmt(p, r.q2.tspot)]);
   if (r.m1) {
@@ -235,19 +250,23 @@ function drawDetail() {
   chart(p, r);
 }
 const LTF_OF = { M: ["D", "Daily"], W: ["4H", "4H"], D: ["1H", "1H"], "4H": ["15m", "15m"], "1H": ["5m", "5m"] };
-const C2_BACK = { formed: 1, done: 1, failed: 1, c3close: 2 };
-function cMap(r, last) {            // positions of C1 (the range candle, may be several back), inside bars, C2, C3, C4
+const C2_BACK = { formed: 1, done: 1, failed: 1, c3close: 2 };      // fallback for old scan files without c2Back
+const c2BackOf = r => r.c2Back ?? C2_BACK[r.status] ?? 0;
+/* positions of C1 (the range candle), the candles inside it, C2, C3, C4 in cs - located by the scanner's own C1/C2
+ * timestamps (c1t / c2t), so the chart marks exactly the candles the scanner used */
+function cMap(r, last, cs) {
   if (r.c1Back == null) return {};
-  const c1 = last - r.c1Back, st = r.status;
+  const at = t => { if (t == null || !cs) return null; const k = cs.findIndex(c => c[0] === t); return k < 0 ? null : k; };
+  const c1 = at(r.c1t) ?? last - r.c1Back, st = r.status;   // cs ends at the current candle (index last)
   if (st === "anticipated") return { C1: c1 };
-  const c2 = last - (C2_BACK[st] || 0), m = { C1: c1 };
+  const c2 = at(r.c2t) ?? last - c2BackOf(r), m = { C1: c1 };
   for (let i = c1 + 1; i < c2; i++) m["in" + (i - c1)] = i;     // inside bars between C1 and C2
   m.C2 = c2;
   if (c2 + 1 <= last) m.C3 = c2 + 1;
   if (c2 + 2 <= last) m.C4 = c2 + 2;
   return m;
 }
-const insideCount = r => r.c1Back == null ? 0 : Math.max(0, r.c1Back - (C2_BACK[r.status] || 0) - (r.status === "anticipated" ? 0 : 1));
+const insideCount = r => r.c1Back == null ? 0 : Math.max(0, r.c1Back - c2BackOf(r) - (r.status === "anticipated" ? 0 : 1));
 function marksOf(map) {               // C1 / inside run / C2 / C3 / C4 positions for the drawing
   const ins = Object.entries(map).filter(([k, i]) => k.startsWith("in") && i >= 0).map(([, i]) => i);
   const ok = i => i != null && i >= 0 ? i : null;
@@ -265,7 +284,7 @@ function chart(p, r) {
   if (r.c1Back != null) s0 = Math.max(0, Math.min(n - 1 - r.c1Back - 5, n - minN));
   const cs = all.slice(s0);
   if (cs.length < 3) return;
-  const last = cs.length - 1, map = cMap(r, last);
+  const last = cs.length - 1, map = cMap(r, last, cs);
   $("#cap1").textContent = `${TF_NAME[detail.tf]} (higher timeframe)`;
   draw($("#cv"), p, r, cs, { from: map.C1 ?? last, intraday: detail.tf === "1H" || detail.tf === "4H", marks: marksOf(map) });
   if (!split) return;

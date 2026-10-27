@@ -1,0 +1,855 @@
+{
+ "identify": [
+  {
+   "name": "nested inside candles keep the mother candle as C1",
+   "test": 1,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     112
+    ],
+    [
+     7200,
+     112,
+     118,
+     102,
+     115
+    ],
+    [
+     10800,
+     114,
+     117,
+     103,
+     116
+    ],
+    [
+     14400,
+     106,
+     108,
+     99,
+     105
+    ]
+   ],
+   "j": 3,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "several containing candles: the furthest-back one is C1 (no sweep of it)",
+   "test": 2,
+   "candles": [
+    [
+     3600,
+     110,
+     130,
+     90,
+     112
+    ],
+    [
+     7200,
+     112,
+     120,
+     100,
+     115
+    ],
+    [
+     10800,
+     114,
+     117,
+     103,
+     116
+    ],
+    [
+     14400,
+     106,
+     108,
+     99,
+     105
+    ]
+   ],
+   "j": 3,
+   "live": false,
+   "expect": {
+    "code": "NO_SWEEP",
+    "dir": 0,
+    "c1": 0
+   }
+  },
+  {
+   "name": "several containing candles: sweep of the furthest-back one",
+   "test": 2,
+   "candles": [
+    [
+     3600,
+     110,
+     130,
+     90,
+     112
+    ],
+    [
+     7200,
+     112,
+     120,
+     100,
+     115
+    ],
+    [
+     10800,
+     114,
+     117,
+     103,
+     116
+    ],
+    [
+     14400,
+     95,
+     100,
+     88,
+     95
+    ]
+   ],
+   "j": 3,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "mother candle beyond the 10-candle lookback is not used",
+   "test": 2,
+   "candles": [
+    [
+     3600,
+     100,
+     200,
+     50,
+     150
+    ],
+    [
+     7200,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     10800,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     14400,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     18000,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     21600,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     25200,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     28800,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     32400,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     36000,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     39600,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     43200,
+     120,
+     160,
+     90,
+     130
+    ],
+    [
+     46800,
+     100,
+     110,
+     85,
+     100
+    ]
+   ],
+   "j": 12,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 1
+   }
+  },
+  {
+   "name": "range broken before C2: the old C1 is dropped (closed outside -> BREAKOUT of the new range)",
+   "test": 3,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     112
+    ],
+    [
+     7200,
+     112,
+     125,
+     110,
+     124
+    ],
+    [
+     10800,
+     115,
+     118,
+     98,
+     105
+    ]
+   ],
+   "j": 2,
+   "live": false,
+   "expect": {
+    "code": "BREAKOUT",
+    "dir": 1,
+    "c1": 1
+   }
+  },
+  {
+   "name": "range broken before C2: C2 is measured against the candle that broke it",
+   "test": 3,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     112
+    ],
+    [
+     7200,
+     112,
+     125,
+     110,
+     124
+    ],
+    [
+     10800,
+     115,
+     118,
+     105,
+     112
+    ]
+   ],
+   "j": 2,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 1
+   }
+  },
+  {
+   "name": "bullish: sweeps the low, closes back inside",
+   "test": 4,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     104,
+     108,
+     98,
+     106
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "bullish C2 with a red body is still a C2 (no colour rule)",
+   "test": 4,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     107,
+     108,
+     98,
+     104
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "bearish: sweeps the high, closes back inside",
+   "test": 5,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     115
+    ],
+    [
+     7200,
+     116,
+     123,
+     112,
+     114
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": -1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "sweep with close outside",
+   "test": 6,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     104,
+     106,
+     97,
+     99
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "BREAKOUT",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "exact touch of the low is not a sweep",
+   "test": 7,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     105,
+     110,
+     100,
+     108
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "NO_SWEEP",
+    "dir": 0,
+    "c1": 0
+   }
+  },
+  {
+   "name": "close exactly on the swept boundary is rejected",
+   "test": 7,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     105,
+     108,
+     98,
+     100
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "REJECTED",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "close exactly on the far boundary is rejected",
+   "test": 7,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     105,
+     120,
+     98,
+     120
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "REJECTED",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "both boundaries swept is ambiguous",
+   "test": 8,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     110,
+     122,
+     98,
+     118
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "AMBIGUOUS",
+    "dir": 0,
+    "c1": 0
+   }
+  },
+  {
+   "name": "equal high keeps the range candle; next candle sweeps it",
+   "test": 9,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     110
+    ],
+    [
+     7200,
+     112,
+     120,
+     105,
+     112
+    ],
+    [
+     10800,
+     112,
+     121,
+     108,
+     115
+    ]
+   ],
+   "j": 2,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": -1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "equal low touch on C2 is not a sweep",
+   "test": 9,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     110
+    ],
+    [
+     7200,
+     112,
+     120,
+     105,
+     112
+    ],
+    [
+     10800,
+     108,
+     115,
+     100,
+     110
+    ]
+   ],
+   "j": 2,
+   "live": false,
+   "expect": {
+    "code": "NO_SWEEP",
+    "dir": 0,
+    "c1": 0
+   }
+  },
+  {
+   "name": "zero-range C1 is invalid",
+   "test": 10,
+   "candles": [
+    [
+     3600,
+     105,
+     105,
+     105,
+     105
+    ],
+    [
+     7200,
+     105,
+     105,
+     105,
+     105
+    ],
+    [
+     10800,
+     105,
+     106,
+     104,
+     105
+    ]
+   ],
+   "j": 2,
+   "live": false,
+   "expect": {
+    "code": "INVALID_DATA",
+    "dir": 0
+   }
+  },
+  {
+   "name": "C2 with high below low is invalid",
+   "test": 10,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     105,
+     99,
+     101,
+     100
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "INVALID_DATA",
+    "dir": 0
+   }
+  },
+  {
+   "name": "C2 with a missing value is invalid",
+   "test": 10,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     105,
+     null,
+     98,
+     104
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "INVALID_DATA",
+    "dir": 0
+   }
+  },
+  {
+   "name": "live candle back inside is FORMING",
+   "test": 11,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     104,
+     108,
+     98,
+     103
+    ]
+   ],
+   "j": 1,
+   "live": true,
+   "expect": {
+    "code": "FORMING",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "live candle beyond the low is SWEEPING",
+   "test": 11,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     104,
+     106,
+     97,
+     99
+    ]
+   ],
+   "j": 1,
+   "live": true,
+   "expect": {
+    "code": "SWEEPING",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "gap in timestamps (missing candles) does not change identification",
+   "test": 12,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     108000,
+     104,
+     108,
+     98,
+     106
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 0
+   }
+  }
+ ],
+ "clean": {
+  "input": [
+   [
+    7200,
+    110,
+    120,
+    100,
+    112
+   ],
+   [
+    3600,
+    100,
+    105,
+    95,
+    101
+   ],
+   [
+    7200,
+    111,
+    121,
+    101,
+    113
+   ],
+   [
+    10800,
+    100,
+    99,
+    101,
+    100
+   ],
+   [
+    14400,
+    null,
+    101,
+    99,
+    100
+   ],
+   [
+    18000,
+    100,
+    101,
+    99,
+    102
+   ],
+   [
+    21600,
+    100,
+    101,
+    -1,
+    100
+   ]
+  ],
+  "expect": [
+   [
+    3600,
+    100,
+    105,
+    95,
+    101
+   ],
+   [
+    7200,
+    111,
+    121,
+    101,
+    113
+   ]
+  ]
+ },
+ "sequence": [
+  [
+   3600,
+   130,
+   135,
+   125,
+   132
+  ],
+  [
+   7200,
+   110,
+   120,
+   100,
+   105
+  ],
+  [
+   10800,
+   104,
+   108,
+   98,
+   103
+  ],
+  [
+   14400,
+   103,
+   109,
+   102,
+   107
+  ],
+  [
+   18000,
+   107,
+   108,
+   104,
+   106
+  ]
+ ]
+}
