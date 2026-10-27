@@ -68,6 +68,7 @@
   .gA { background:var(--green); } .gB { background:var(--amber); } .gC { background:var(--sec); }
   .rl { display:flex; gap:8px; align-items:flex-start; font-size:13px; color:var(--ink2); padding:6px 0; }
   .rl input { margin-top:3px; }
+  .q i { font-style:normal; font-weight:800; color:var(--ink2); font-size:11px; }
   .empty { color:var(--sec); text-align:center; padding:18px 8px; }
   /* detail */
   .sheet { position:fixed; inset:0; background:rgba(10,6,20,.5); z-index:20; display:flex; align-items:flex-end; justify-content:center; }
@@ -107,16 +108,22 @@
   <section id="list" style="display:grid;gap:8px"></section>
   <section class="card">
     <h2>All timeframes</h2>
-    <div class="muted" style="margin:-4px 2px 8px">C3 = formed (C2 closed, now in C3) · C2 = forming · Swp = sweeping · Near = anticipated · A/B/C = C1 grade · faded = C1 fails your rules</div>
+    <div class="muted" style="margin:-4px 2px 8px">C3 = formed (C2 closed, now in C3) · C4 = C3 closure · C2 = forming · Swp = sweeping · Near = anticipated · A/B/C = C1 grade · faded = C1 fails your rules</div>
     <div style="overflow-x:auto"><table class="mx" id="mx"></table></div>
   </section>
   <section class="card">
-    <h2>C1 rules</h2>
-    <div class="muted" style="margin-bottom:6px">A candle only counts as C1 when it passes the rules you tick. Others are hidden (tap “Show” above the list to see them).</div>
+    <h2>C1 and C2 rules</h2>
+    <div class="muted" style="margin-bottom:6px">A setup only shows when it passes the rules you tick. Others are hidden (tap “Show” above the list to see them).</div>
+    <div class="muted" style="font-weight:700;margin-top:4px">C1 – the range that gets swept</div>
     <label class="rl"><input type="checkbox" id="reqC1"> <span><b>Proper C1</b> – range at least 0.7× the average of the 20 candles before it, and not an inside bar</span></label>
     <label class="rl"><input type="checkbox" id="reqKey"> <span><b>Swept at a key level</b> – C2’s sweep reaches the previous day / week / month high or low (PDH/PDL, PWH/PWL, PMH/PML), the 12-month high/low on Monthly, or an unfilled FVG on the next timeframe up</span></label>
     <label class="rl"><input type="checkbox" id="reqBias"> <span><b>HTF bias agrees</b> – the next timeframe up (1H/4H→Daily, Daily→Weekly, Weekly→Monthly) has the same TTrades bias</span></label>
-    <div class="muted" style="margin-top:6px">Grade <b>A</b> = proper C1 + key level + bias not against · <b>B</b> = proper C1 + key level or bias · <b>C</b> = the rest.</div>
+    <div class="muted" style="font-weight:700;margin-top:8px">C2 – the sweep candle</div>
+    <label class="rl"><input type="checkbox" id="reqSweep"> <span><b>Clean sweep</b> – goes at least 2 pips (or 5% of C1) beyond C1, and no more than C1’s whole range (a bigger move is an expansion, not a sweep)</span></label>
+    <label class="rl"><input type="checkbox" id="reqReject"> <span><b>Rejection close</b> – bullish C2 closes in its upper half (bearish in its lower half), leaving the wick</span></label>
+    <label class="rl"><input type="checkbox" id="reqKz"> <span><b>Kill zone</b> (1H / 4H) – the sweep happens in London 02:00–05:00 or New York 08:00–11:00 NY time</span></label>
+    <div class="muted" style="margin-top:6px">Always applied: when C2 sweeps <i>both</i> sides (outside bar) it only counts if it closes in its outer third. <b>C3 closure</b> setups (C2 closes outside C1, then C3 closes back through C2’s open) are shown separately and trade C4.</div>
+    <div class="muted" style="margin-top:6px">Grade <b>A</b> = proper C1 + key level + bias not against · <b>B</b> = proper C1 + key level or bias · <b>C</b> = the rest. One grade lower when C2 is not a clean sweep with a rejection close.</div>
   </section>
   <section class="card">
     <h2>Live prices</h2>
@@ -129,6 +136,8 @@
     <b>Forming</b> – the current candle has swept the previous high/low and is back inside now. Becomes Formed if it closes there.<br>
     <b>Sweeping</b> – the current candle is beyond the previous high/low, not back inside yet.<br>
     <b>C1</b> – the candle whose range is swept. It must be a proper candle (not tiny, not an inside bar) and its sweep should happen at a key level; see C1 rules.<br>
+    <b>C2</b> – the candle that sweeps C1’s high or low and closes back inside C1. T-spot = 50% of C2’s wick, where C3 should hold.<br>
+    <b>C3 closure</b> – C2 swept but closed outside C1; C3 then closed back through C2’s open, so C4 is the expected continuation.<br>
     <b>Model-1</b> – on the lower timeframe (Monthly→Daily, Weekly→4H, Daily→1H, 4H→15m, 1H→5m): after the sweep, the opening price of the last opposite candle (or candle series) before the sweep extreme. A close back through it is the entry; stop beyond the sweep, target the other side of the CRT range. When that candle is mostly wick, its high/low is used instead.<br>
     <b>Anticipated</b> – no sweep yet, price is within <span id="nearTxt">25%</span> of the previous candle's high/low.<br>
     Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Live prices refresh every minute through your Cloudflare Worker; the GitHub scan is the backup. Gold uses COMEX gold futures.
@@ -148,8 +157,8 @@
     <div class="muted" id="dNote"></div>
   </div>
 </div>
-<script src="live.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="live.js?v=6"></script>
+<script src="app.js?v=6"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

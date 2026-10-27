@@ -61,7 +61,7 @@ function classify(cs, tf, pip) {
   const price = c0;
   let res = { status: "none", dir: 0 };
   let bull = l1 < l2 && l2 < c1 && c1 < h2, bear = h1 > h2 && l2 < c1 && c1 < h2;
-  if (bull && bear) { bull = c1 >= o1; bear = !bull; }
+  if (bull && bear) { const rg = h1 - l1, pos = rg > 0 ? (c1 - l1) / rg : 0.5; bull = pos >= 2 / 3; bear = pos <= 1 / 3; }   // outside bar
   let formed = null;
   if (bull || bear) {
     const d = bull ? 1 : -1, t2 = d === 1 ? h2 : l2, t1 = (h2 + l2) / 2, inv = d === 1 ? l1 : h1;
@@ -73,9 +73,13 @@ function classify(cs, tf, pip) {
   let live = null;
   const sl = l0 < l1, sh = h0 > h1;
   if (sl || sh) {
-    const d = sl && sh ? (price >= o0 ? 1 : -1) : sl ? 1 : -1;
-    const level = d === 1 ? l1 : h1, inside = l1 < price && price < h1;
-    live = { status: inside ? "forming" : "sweeping", dir: d, level, sweep: d === 1 ? l0 : h0, t2: d === 1 ? h1 : l1, t1: (h1 + l1) / 2, c1h: h1, c1l: l1 };
+    let d;
+    if (sl && sh) { const rg0 = h0 - l0, pos0 = rg0 > 0 ? (price - l0) / rg0 : 0.5; d = pos0 >= 2 / 3 ? 1 : pos0 <= 1 / 3 ? -1 : 0; }
+    else d = sl ? 1 : -1;
+    if (d) {
+      const level = d === 1 ? l1 : h1, inside = l1 < price && price < h1;
+      live = { status: inside ? "forming" : "sweeping", dir: d, level, sweep: d === 1 ? l0 : h0, t2: d === 1 ? h1 : l1, t1: (h1 + l1) / 2, c1h: h1, c1l: l1 };
+    }
   } else {
     const rng = h1 - l1;
     if (rng > 0) {
@@ -86,8 +90,25 @@ function classify(cs, tf, pip) {
       }
     }
   }
+  // candle 3 closure (TTrades): C2 swept C1 but closed outside it; C3 closed back through C2's open
+  let c3 = null;
+  if (cs.length >= 4) {
+    const [, , ha, la] = cs[cs.length - 4], [, ob, hb, lb, cb] = cs[cs.length - 3], [, , hc, lc, cc] = cs[cs.length - 2];
+    for (const d of [1, -1]) {
+      const ok = d === 1 ? (lb < la && cb < la && cc > ob && lc >= lb) : (hb > ha && cb > ha && cc < ob && hc <= hb);
+      if (ok) {
+        const t2 = d === 1 ? ha : la, inv = d === 1 ? lb : hb;
+        const hit2 = d === 1 ? h0 >= t2 : l0 <= t2, failed = d === 1 ? l0 < inv : h0 > inv, risk = Math.abs(price - inv);
+        if (!hit2 && !failed && (t2 - price) * d > 0)
+          c3 = { status: "c3close", dir: d, t1: (ha + la) / 2, t2, inv, c1h: ha, c1l: la, sweep: inv, hit1: false, hit2: false, failed: false,
+                 toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null };
+        break;
+      }
+    }
+  }
   if (formed && !formed.failed && !formed.hit2) { res = formed; if (live && (live.status === "forming" || live.status === "sweeping")) res.also = live.status; }
   else if (live && (live.status === "forming" || live.status === "sweeping")) res = live;
+  else if (c3) res = c3;
   else if (formed) { res = formed; res.status = formed.hit2 ? "done" : "failed"; }
   else if (live) res = live;
   res.price = price;
@@ -140,7 +161,7 @@ function ttBias(S, k) {
 const lastAtOrBefore = (S, t) => { let k = -1; for (let i = 0; i < S.length; i++) if (S[i][0] <= t) k = i; return k < 0 ? null : k; };
 function c1Quality(lists, tf, r) {
   const cs = lists[tf], n = cs.length, st = r.status;
-  const c1i = ["formed", "done", "failed"].includes(st) ? n - 3 : n - 2;
+  const c1i = st === "c3close" ? n - 4 : ["formed", "done", "failed"].includes(st) ? n - 3 : n - 2;
   if (c1i < 1 || !r.dir) return null;
   const d = r.dir, [t, , h, l] = cs[c1i], rng = h - l;
   const prev = cs.slice(Math.max(0, c1i - 20), c1i);
@@ -178,6 +199,30 @@ function c1Quality(lists, tf, r) {
   const grade = req && key && bias !== false ? "A" : req && (key || bias) ? "B" : "C";
   return { size, inside, key: key ? key[0] : null, keyLvl: key ? key[1] : null, bias, grade, c1t: t };
 }
+/* C2 quality: clean sweep (>= max(2 pips, 5% of C1) beyond C1, <= C1's range), rejection close (bullish: upper half
+ * of C2), outside bar, T-spot (50% of C2's wick), and kill-zone timing of the sweep on 1H / 4H. */
+function c2Checks(lists, tf, r, pip) {
+  const cs = lists[tf], n = cs.length, st = r.status, d = r.dir;
+  if (!d) return null;
+  const c1i = st === "c3close" ? n - 4 : ["formed", "done", "failed"].includes(st) ? n - 3 : n - 2;
+  if (c1i < 0 || c1i + 1 >= n) return null;
+  const [, , h1, l1] = cs[c1i], [t2c, o2, h2, l2, c2] = cs[c1i + 1], rng = h1 - l1;
+  const depth = d === 1 ? l1 - l2 : h2 - h1;
+  const sweep = depth >= Math.max(2 * pip, 0.05 * rng) && depth <= rng;
+  const r2 = h2 - l2, pos = r2 > 0 ? (c2 - l2) / r2 : 0.5, reject = d === 1 ? pos >= 0.5 : pos <= 0.5;
+  const tspot = d === 1 ? (l2 + Math.min(o2, c2)) / 2 : (h2 + Math.max(o2, c2)) / 2;
+  let kz = null, kzName = null;
+  if (tf === "1H" || tf === "4H") {
+    let tExt = t2c;
+    if (tf === "4H" && lists["1H"]) {
+      const bars = lists["1H"].filter(b => b[0] >= t2c && b[0] < t2c + 4 * H);
+      if (bars.length) tExt = bars.reduce((a, b) => (d === 1 ? b[3] < a[3] : b[2] > a[2]) ? b : a)[0];
+    }
+    const hr = Math.floor(((nyLocal(tExt) % DAY) + DAY) % DAY / H);
+    kzName = hr >= 2 && hr < 5 ? "London" : hr >= 8 && hr < 11 ? "New York" : null; kz = kzName !== null;
+  }
+  return { depth: round(depth / pip, 1), sweep, reject, outside: h2 > h1 && l2 < l1, tspot, kz, kzName };
+}
 function addModel1(row, tfs, ltfFull) {
   const lists = { M: tfs.M, W: tfs.W, D: tfs.D, "4H": tfs["4H"], "1H": tfs["1H"], ...ltfFull };
   const dg = row.pip >= 0.1 ? 2 : row.pip >= 0.01 ? 3 : 5;
@@ -185,11 +230,14 @@ function addModel1(row, tfs, ltfFull) {
     if (!r.status || r.status === "none") continue;
     const q = c1Quality(lists, tf, r);
     if (q) { if (typeof q.keyLvl === "number") q.keyLvl = round(q.keyLvl, dg + 1); r.q = q; }
+    const q2 = c2Checks(lists, tf, r, row.pip);
+    if (q2) { q2.tspot = round(q2.tspot, dg + 1); r.q2 = q2; }
   }
   for (const [tf, r] of Object.entries(row.tf)) {
-    if (!["formed", "forming", "sweeping", "done"].includes(r.status) || !lists[LTF_FOR[tf]]) continue;
+    if (!["formed", "forming", "sweeping", "done", "c3close"].includes(r.status) || !lists[LTF_FOR[tf]]) continue;
     const cs = r.candles;
-    const [t0, lvl] = r.status === "formed" || r.status === "done" ? [cs[cs.length - 2][0], r.dir === 1 ? r.c1l : r.c1h] : [cs[cs.length - 1][0], r.level];
+    const [t0, lvl] = r.status === "c3close" ? [cs[cs.length - 3][0], r.dir === 1 ? r.c1l : r.c1h] :
+      r.status === "formed" || r.status === "done" ? [cs[cs.length - 2][0], r.dir === 1 ? r.c1l : r.c1h] : [cs[cs.length - 1][0], r.level];
     const m = model1(lists[LTF_FOR[tf]], r.dir, t0, lvl, r.t2, row.pip);
     if (m) { for (const k of ["ext", "level", "entry", "target"]) if (typeof m[k] === "number") m[k] = round(m[k], dg + 1); r.m1 = m; }
   }

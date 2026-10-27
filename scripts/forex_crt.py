@@ -66,8 +66,9 @@ def classify(df, tf, pip):
     # --- formed: previous closed candle is a CRT C2 relative to the one before ---
     bull = c1.Low < c2.Low and c2.Low < c1.Close < c2.High
     bear = c1.High > c2.High and c2.Low < c1.Close < c2.High
-    if bull and bear:
-        bull, bear = c1.Close >= c1.Open, c1.Close < c1.Open
+    if bull and bear:                      # outside bar: only counts when it closes in its outer third
+        rg = float(c1.High - c1.Low); pos = (c1.Close - c1.Low) / rg if rg > 0 else 0.5
+        bull, bear = pos >= 2 / 3, pos <= 1 / 3
     formed = None
     if bull or bear:
         d = 1 if bull else -1
@@ -85,15 +86,17 @@ def classify(df, tf, pip):
     live = None
     sl, sh = c0.Low < c1.Low, c0.High > c1.High
     if sl or sh:
-        if sl and sh:
-            d = 1 if price >= c0.Open else -1
+        if sl and sh:                      # swept both sides: direction only from a close in the outer third
+            rg0 = float(c0.High - c0.Low); pos0 = (price - c0.Low) / rg0 if rg0 > 0 else 0.5
+            d = 1 if pos0 >= 2 / 3 else -1 if pos0 <= 1 / 3 else 0
         else:
             d = 1 if sl else -1
-        lvl = float(c1.Low if d == 1 else c1.High)
-        inside = (c1.Low < price < c1.High)
-        live = dict(status="forming" if inside else "sweeping", dir=d, level=lvl,
-                    sweep=float(c0.Low if d == 1 else c0.High), t2=float(c1.High if d == 1 else c1.Low),
-                    t1=float((c1.High + c1.Low) / 2), c1h=float(c1.High), c1l=float(c1.Low))
+        if d:
+            lvl = float(c1.Low if d == 1 else c1.High)
+            inside = (c1.Low < price < c1.High)
+            live = dict(status="forming" if inside else "sweeping", dir=d, level=lvl,
+                        sweep=float(c0.Low if d == 1 else c0.High), t2=float(c1.High if d == 1 else c1.Low),
+                        t1=float((c1.High + c1.Low) / 2), c1h=float(c1.High), c1l=float(c1.Low))
     else:
         rng = float(c1.High - c1.Low)
         if rng > 0:
@@ -103,13 +106,31 @@ def classify(df, tf, pip):
                 lvl = float(c1.Low if d == 1 else c1.High)
                 live = dict(status="anticipated", dir=d, level=lvl, dist=round(abs(price - lvl) / pip, 1),
                             c1h=float(c1.High), c1l=float(c1.Low), t2=float(c1.High if d == 1 else c1.Low))
-    # priority: active formed > forming > sweeping > formed (finished) > anticipated
+    # --- candle 3 closure (TTrades): C2 swept C1 but closed outside it; C3 closed back through C2's open ---
+    c3 = None
+    if len(df) >= 4:
+        a, b, c = df.iloc[-4], df.iloc[-3], df.iloc[-2]
+        for d in (1, -1):
+            ok = (b.Low < a.Low and b.Close < a.Low and c.Close > b.Open and c.Low >= b.Low) if d == 1 else \
+                 (b.High > a.High and b.Close > a.High and c.Close < b.Open and c.High <= b.High)
+            if ok:
+                t2 = float(a.High if d == 1 else a.Low); inv = float(b.Low if d == 1 else b.High)
+                hit2 = (c0.High >= t2) if d == 1 else (c0.Low <= t2); failed = (c0.Low < inv) if d == 1 else (c0.High > inv)
+                risk = abs(price - inv)
+                if not hit2 and not failed and (t2 - price) * d > 0:
+                    c3 = dict(status="c3close", dir=d, t1=float((a.High + a.Low) / 2), t2=t2, inv=inv, c1h=float(a.High),
+                              c1l=float(a.Low), sweep=inv, hit1=False, hit2=False, failed=False,
+                              toT2=round((t2 - price) * d / pip, 1), rr=round(abs(t2 - price) / risk, 2) if risk > 0 else None)
+                break
+    # priority: active formed > forming > sweeping > C3 closure > formed (finished) > anticipated
     if formed and not formed["failed"] and not formed["hit2"]:
         res = formed
         if live and live["status"] in ("forming", "sweeping"):
             res["also"] = live["status"]
     elif live and live["status"] in ("forming", "sweeping"):
         res = live
+    elif c3:
+        res = c3
     elif formed:
         res = formed
         res["status"] = "done" if formed["hit2"] else "failed"
@@ -190,7 +211,7 @@ def c1_quality(lists, tf, r):
     """Is C1 a proper C1?  size (>= 0.7 x average range of the 20 candles before it), not an inside bar,
     swept at a key level (previous day/week/month high-low or an unfilled higher-timeframe FVG), and HTF bias."""
     cs = lists[tf]; n = len(cs); st = r["status"]
-    c1i = n - 3 if st in ("formed", "done", "failed") else n - 2
+    c1i = n - 4 if st == "c3close" else n - 3 if st in ("formed", "done", "failed") else n - 2
     if c1i < 1 or not r.get("dir"):
         return None
     d = r["dir"]; t, o, h, l, c = cs[c1i]; rng = h - l
@@ -242,6 +263,41 @@ def c1_quality(lists, tf, r):
                 bias=bias, grade=grade, c1t=t)
 
 
+def ny_hour(t):
+    return pd.Timestamp(t, unit="s", tz="UTC").tz_convert(NY).hour
+
+
+def c2_checks(lists, tf, r, pip):
+    """C2 quality: a clean sweep (at least max(2 pips, 5% of C1) beyond C1, no more than C1's range),
+    a rejection close (bullish: in the upper half of C2), outside bar flag, T-spot (50% of C2's wick),
+    and kill-zone timing of the sweep for 1H / 4H (London 02-05, New York 08-11 NY time)."""
+    cs = lists[tf]; n = len(cs); st = r["status"]; d = r.get("dir")
+    if not d:
+        return None
+    c1i = n - 4 if st == "c3close" else n - 3 if st in ("formed", "done", "failed") else n - 2
+    if c1i < 0 or c1i + 1 >= n:
+        return None
+    _, _, h1, l1, _ = cs[c1i]; t2c, o2, h2, l2, c2 = cs[c1i + 1]
+    rng = h1 - l1
+    depth = (l1 - l2) if d == 1 else (h2 - h1)
+    sweep_ok = depth >= max(2 * pip, 0.05 * rng) and depth <= rng
+    r2 = h2 - l2; pos = (c2 - l2) / r2 if r2 > 0 else 0.5
+    reject = pos >= 0.5 if d == 1 else pos <= 0.5
+    tspot = (l2 + min(o2, c2)) / 2 if d == 1 else (h2 + max(o2, c2)) / 2
+    kz = None; kz_name = None
+    if tf in ("1H", "4H"):
+        t_ext = t2c
+        if tf == "4H" and "1H" in lists:
+            bars = [b for b in lists["1H"] if t2c <= b[0] < t2c + 4 * 3600]
+            if bars:
+                t_ext = (min(bars, key=lambda b: b[3]) if d == 1 else max(bars, key=lambda b: b[2]))[0]
+        hr = ny_hour(t_ext)
+        kz_name = "London" if 2 <= hr < 5 else "New York" if 8 <= hr < 11 else None
+        kz = kz_name is not None
+    return dict(depth=round(depth / pip, 1), sweep=bool(sweep_ok), reject=bool(reject), outside=bool(h2 > h1 and l2 < l1),
+                tspot=tspot, kz=kz, kzName=kz_name)
+
+
 def add_model1(row, tfs, ltf_lists):
     """attach Model-1 (on the paired lower timeframe) to every CRT that has a sweep"""
     lists = {k: [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in df.iterrows()]
@@ -257,12 +313,18 @@ def add_model1(row, tfs, ltf_lists):
                 if isinstance(q.get("keyLvl"), float):
                     q["keyLvl"] = round(q["keyLvl"], dg + 1)
                 r["q"] = q
+            q2 = c2_checks(lists, tf, r, row["pip"])
+            if q2:
+                q2["tspot"] = round(q2["tspot"], dg + 1)
+                r["q2"] = q2
     for tf, r in row["tf"].items():
         st = r.get("status")
-        if st not in ("formed", "forming", "sweeping", "done") or LTF_FOR.get(tf) not in lists:
+        if st not in ("formed", "forming", "sweeping", "done", "c3close") or LTF_FOR.get(tf) not in lists:
             continue
         cs = r["candles"]
-        if st in ("formed", "done"):
+        if st == "c3close":
+            t0, lvl = cs[-3][0], (r["c1l"] if r["dir"] == 1 else r["c1h"])
+        elif st in ("formed", "done"):
             t0, lvl = cs[-2][0], (r["c1l"] if r["dir"] == 1 else r["c1h"])
         else:
             t0, lvl = cs[-1][0], r["level"]

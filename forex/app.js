@@ -8,13 +8,13 @@ const TFS = ["1H", "4H", "D", "W", "M"];
 const TF_NAME = { "1H": "1H", "4H": "4H", D: "Daily", W: "Weekly", M: "Monthly" };
 const TF_SHORT = { "1H": "1H", "4H": "4H", D: "D", W: "W", M: "M" };
 const M1_TF = { M: "Daily", W: "4H", D: "1H", "4H": "15m", "1H": "5m" };
-const ORDER = { formed: 0, forming: 1, sweeping: 2, anticipated: 3, done: 4, failed: 5, none: 6 };
-const SETUP = ["formed", "forming", "sweeping", "anticipated"];
+const ORDER = { formed: 0, c3close: 1, forming: 2, sweeping: 3, anticipated: 4, done: 5, failed: 6, none: 7 };
+const SETUP = ["formed", "c3close", "forming", "sweeping", "anticipated"];
 const $ = s => document.querySelector(s);
 const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
              set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 
-let req = ls.get("fx-req", { c1: true, key: true, bias: false }), showWeak = false, view = ls.get("fx-view", "single"), data = null, tf = ls.get("fx-tf", "4H"), st = ls.get("fx-st", "all"), dir = 0, detail = null;
+let req = Object.assign({ c1: true, key: true, bias: false, sweep: true, reject: true, kz: false }, ls.get("fx-req", {})), showWeak = false, view = ls.get("fx-view", "single"), data = null, tf = ls.get("fx-tf", "4H"), st = ls.get("fx-st", "all"), dir = 0, detail = null;
 
 /* ---------- formatting ---------- */
 const digits = p => p.pip >= 0.1 ? 2 : p.pip >= 0.01 ? 3 : 5;
@@ -36,6 +36,7 @@ function label(r, short) {
   const up = r.dir === 1, a = up ? "▲" : "▼";
   switch (r.status) {
     case "formed": return short ? `${a} C3` : `${a} Formed`;
+    case "c3close": return short ? `${a} C4` : `${a} C3 closure`;
     case "forming": return short ? `${a} C2` : `${a} C2 forming`;
     case "sweeping": return short ? `${a} Swp` : up ? "▲ Sweeping low" : "▼ Sweeping high";
     case "anticipated": return short ? `${a} Near` : up ? "▲ Near low" : "▼ Near high";
@@ -93,12 +94,12 @@ function render() {
   const rows = data.pairs.map(p => ({ p, r: p.tf[tf] })).filter(x => x.r);
   // chips with counts
   const count = s => rows.filter(x => match(x.r, s)).length;
-  const chips = [["all", "All setups"], ["m1", "Model-1 ✓"], ["m1p", "Model-1 pending"], ["formed", "Formed"], ["forming", "Forming"], ["sweeping", "Sweeping"], ["anticipated", "Anticipated"]];
+  const chips = [["all", "All setups"], ["m1", "Model-1 ✓"], ["m1p", "Model-1 pending"], ["formed", "Formed"], ["c3close", "C3 closure"], ["forming", "Forming"], ["sweeping", "Sweeping"], ["anticipated", "Anticipated"]];
   $("#stChips").innerHTML = chips.map(([k, n]) => `<button class="chip${st === k ? " on" : ""}" data-st="${k}">${n}<b>${count(k)}</b></button>`).join("");
   // list
   const hidden = rows.filter(x => match(x.r, st, true)).length - rows.filter(x => match(x.r, st)).length;
-  $("#weakNote").innerHTML = hidden > 0 ? `${hidden} setup${hidden > 1 ? "s" : ""} hidden – C1 doesn't meet your rules. <button class="chip" id="showWeak" type="button">Show</button>` :
-    showWeak ? `Showing all setups, including weak C1s. <button class="chip" id="showWeak" type="button">Hide weak</button>` : "";
+  $("#weakNote").innerHTML = hidden > 0 ? `${hidden} setup${hidden > 1 ? "s" : ""} hidden – they don't meet your C1/C2 rules. <button class="chip" id="showWeak" type="button">Show</button>` :
+    showWeak ? `Showing all setups, including weak ones. <button class="chip" id="showWeak" type="button">Hide weak</button>` : "";
   const show = rows.filter(x => match(x.r, st))
     .sort((a, b) => m1rank(a.r) - m1rank(b.r) || ORDER[a.r.status] - ORDER[b.r.status] || a.p.sym.localeCompare(b.p.sym));
   $("#list").innerHTML = show.length ? show.map(x => card(x.p, x.r)).join("")
@@ -108,15 +109,18 @@ function render() {
     data.pairs.map(p => `<tr><td>${esc(p.sym)}</td>${TFS.map(t => {
       const r = p.tf[t]; if (!r) return "<td></td>";
       const m = r.m1 && !r.m1.hit ? (r.m1.confirmed ? "<br><small>M1 ✓</small>" : "<br><small>M1 …</small>") : "";
-      const g = r.q && SETUP.includes(r.status) ? ` <small>${r.q.grade}</small>` : "";
+      const g = r.q && SETUP.includes(r.status) ? ` <small>${grade(r)}</small>` : "";
       return `<td><button class="dot ${cls(r)}${SETUP.includes(r.status) && !passes(r) ? " weak" : ""}" data-sym="${esc(p.sym)}" data-tf="${t}">${label(r, true)}${g}${m}</button></td>`;
     }).join("")}</tr>`).join("") + "</tbody>";
   if (detail) drawDetail();
 }
 function passes(r) {            // C1 rules chosen in settings
   const q = r.q;
+  const q2 = r.q2, swept = ["formed", "c3close", "forming", "sweeping"].includes(r.status);
   if (!q) return !(req.c1 || req.key || req.bias);
-  return (!req.c1 || (q.size && !q.inside)) && (!req.key || !!q.key) && (!req.bias || q.bias === true);
+  const c1ok = (!req.c1 || (q.size && !q.inside)) && (!req.key || !!q.key) && (!req.bias || q.bias === true);
+  const c2ok = !swept || !q2 || ((!req.sweep || q2.sweep) && (!req.reject || q2.reject) && (!req.kz || q2.kz !== false));
+  return c1ok && c2ok;
 }
 function match(r, s, ignoreRules) {
   if (dir !== 0 && r.dir !== dir) return false;
@@ -135,10 +139,21 @@ function m1line(p, r, t) {
   if (m.confirmed) return `<span class="m1 ok">${a} Model-1 ✓ on ${tfn} · ${ago2(m.tConf)} · entry <b>${fmt(p, m.entry)}</b> · SL <b>${fmt(p, m.ext)}</b> · TP <b>${fmt(p, m.target)}</b>${m.rr != null ? ` · R:R <b>${m.rr}</b>` : ""}</span>`;
   return `<span class="m1 wait">Model-1 pending on ${tfn}: needs a close ${m.dir === 1 ? "above" : "below"} <b>${fmt(p, m.level)}</b> (${m.need} pips)</span>`;
 }
+function grade(r) {            // C1 grade, one step lower when C2 is not a clean sweep with a rejection close
+  const q = r.q; if (!q) return null;
+  const q2 = r.q2, swept = ["formed", "c3close", "forming", "sweeping"].includes(r.status);
+  if (!swept || !q2 || (q2.sweep && q2.reject)) return q.grade;
+  return q.grade === "A" ? "B" : "C";
+}
 function qline(r) {
   const q = r.q; if (!q) return "";
   const ck = (ok, txt) => `<span class="${ok === true ? "ok" : ok === false ? "no" : "na"}">${ok === true ? "✓" : ok === false ? "✗" : "–"} ${txt}</span>`;
-  return `<div class="q"><b class="g g${q.grade}">${q.grade}</b>${ck(q.size, "C1 size")}${ck(!q.inside, "not inside bar")}${ck(!!q.key, q.key ? "at " + q.key : "key level")}${ck(q.bias, "HTF bias")}</div>`;
+  const g = grade(r);
+  let out = `<div class="q"><b class="g g${g}">${g}</b><i>C1</i>${ck(q.size, "size")}${ck(!q.inside, "not inside bar")}${ck(!!q.key, q.key ? "at " + q.key : "key level")}${ck(q.bias, "HTF bias")}</div>`;
+  const q2 = r.q2;
+  if (q2 && ["formed", "c3close", "forming", "sweeping"].includes(r.status))
+    out += `<div class="q"><b class="g" style="background:transparent"></b><i>C2</i>${ck(q2.sweep, `clean sweep (${q2.depth} pips)`)}${ck(q2.reject, "rejection close")}${q2.kz === null ? "" : ck(q2.kz, q2.kzName ? q2.kzName + " kill zone" : "kill zone")}${q2.outside ? '<span class="na">outside bar</span>' : ""}</div>`;
+  return out;
 }
 function card(p, r) {
   const d = [];
@@ -149,6 +164,11 @@ function card(p, r) {
     d.push(`Invalid ${r.dir === 1 ? "below" : "above"} <b>${fmt(p, r.inv)}</b>`);
     if (r.rr != null) d.push(`R:R from here <b>${r.rr}</b>`);
     if (r.also) d.push(`<span class="muted">current candle ${r.also === "forming" ? "is forming a new C2" : "is sweeping"}</span>`);
+  } else if (r.status === "c3close") {
+    d.push(`C2 closed outside C1, C3 closed back through C2’s open → C4 continuation`);
+    d.push(`Target C1 ${opp} <b>${fmt(p, r.t2)}</b> (${Math.abs(r.toT2)} pips)`);
+    d.push(`Invalid ${r.dir === 1 ? "below" : "above"} <b>${fmt(p, r.inv)}</b>`);
+    if (r.rr != null) d.push(`R:R from here <b>${r.rr}</b>`);
   } else if (r.status === "forming") {
     d.push(`Swept previous ${side} <b>${fmt(p, r.level)}</b>, back inside`);
     d.push(`Target <b>${fmt(p, r.t2)}</b>`);
@@ -192,7 +212,8 @@ function drawDetail() {
   if (r.t2 != null) L.push(["Pips to T2", pips(p, r.price, r.t2).toFixed(1)]);
   if (r.rr != null) L.push(["R:R from here", r.rr]);
   L.push(["Candle closes in", left(endOf(r, detail.tf))]);
-  if (r.q) L.push(["C1 grade", r.q.grade + (r.q.key ? " · " + r.q.key : "")]);
+  if (r.q) L.push(["Grade", grade(r) + (r.q.key ? " · " + r.q.key : "")]);
+  if (r.q2 && ["formed", "c3close", "forming", "sweeping"].includes(r.status)) L.push(["C2 sweep", r.q2.depth + " pips" + (r.q2.sweep ? " ✓" : " ✗")], ["T-spot (C2 wick 50%)", fmt(p, r.q2.tspot)]);
   if (r.m1) {
     const m = r.m1;
     L.push([`Model-1 (${M1_TF[detail.tf]})`, m.confirmed ? (m.hit ? "✓ hit target" : "✓ confirmed") : "pending"], ["Model-1 level", fmt(p, m.level) + (m.wick ? " (wick)" : "")]);
@@ -204,7 +225,8 @@ function drawDetail() {
 }
 const LTF_OF = { M: ["D", "Daily"], W: ["4H", "4H"], D: ["1H", "1H"], "4H": ["15m", "15m"], "1H": ["5m", "5m"] };
 function cMap(r, last) {
-  return r.status === "formed" || r.status === "done" || r.status === "failed" ? { C1: last - 2, C2: last - 1, C3: last } :
+  return r.status === "c3close" ? { C1: last - 3, C2: last - 2, C3: last - 1, C4: last } :
+         r.status === "formed" || r.status === "done" || r.status === "failed" ? { C1: last - 2, C2: last - 1, C3: last } :
          (r.status === "forming" || r.status === "sweeping") ? { C1: last - 1, C2: last } :
          r.status === "anticipated" ? { C1: last - 1 } : {};
 }
@@ -243,7 +265,7 @@ function draw(cv, p, r, cs, o) {
   if (o.empty) { g.fillStyle = C.sec; g.font = "13px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillText(o.empty, 10, H / 2); return; }
   const last = cs.length - 1;
   const padR = 64, padB = 22, padT = 18, plotW = W - padR - 6, plotH = H - padB - padT;
-  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext, r.q && r.q.keyLvl].filter(v => v != null);
+  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext, r.q && r.q.keyLvl, r.q2 && r.q2.tspot].filter(v => v != null);
   let hi = Math.max(...cs.map(c => c[2]), ...lv), lo = Math.min(...cs.map(c => c[3]), ...lv);
   const padY = (hi - lo) * 0.06 || hi * 0.001; hi += padY; lo -= padY;
   const step = plotW / (cs.length + 4), bw = Math.max(1.5, step * 0.62);
@@ -272,7 +294,8 @@ function draw(cv, p, r, cs, o) {
     hline((r.c1h + r.c1l) / 2, C.sec, "50%", true);
   }
   if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key.replace(" FVG", "FVG"), true);
-  const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" ? r.inv : r.sweep;
+  if (r.q2 && ["formed", "c3close"].includes(r.status) && r.q2.tspot != null) hline(r.q2.tspot, C.amber, "T-spot", true);
+  const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" || r.status === "c3close" ? r.inv : r.sweep;
   if (sweepPx != null && !o.m1) hline(sweepPx, C.dn, "Sweep", true);
   // Model-1 marks (lower-timeframe chart)
   const m = o.m1;
@@ -336,8 +359,9 @@ document.querySelectorAll("#dView button").forEach(x => x.classList.toggle("on",
 $("#sheet").addEventListener("click", e => { if (e.target.id === "sheet") closeDetail(); });
 $("#refresh").onclick = () => load(true);
 document.addEventListener("click", e => { if (e.target.id === "showWeak") { showWeak = !showWeak; render(); } });
-["reqC1", "reqKey", "reqBias"].forEach(id => { const el = $("#" + id); el.checked = req[{ reqC1: "c1", reqKey: "key", reqBias: "bias" }[id]];
-  el.onchange = () => { req = { c1: $("#reqC1").checked, key: $("#reqKey").checked, bias: $("#reqBias").checked }; ls.set("fx-req", req); render(); }; });
+const REQ_ID = { reqC1: "c1", reqKey: "key", reqBias: "bias", reqSweep: "sweep", reqReject: "reject", reqKz: "kz" };
+Object.entries(REQ_ID).forEach(([id, k]) => { const el = $("#" + id); el.checked = req[k];
+  el.onchange = () => { Object.entries(REQ_ID).forEach(([i, kk]) => req[kk] = $("#" + i).checked); ls.set("fx-req", req); render(); }; });
 addEventListener("resize", () => { if (detail) drawDetail(); });
 try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (detail) drawDetail(); }); } catch (e) {}
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
