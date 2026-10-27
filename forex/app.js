@@ -170,18 +170,20 @@ function card(p, r) {
     d.push(`Invalid ${r.dir === 1 ? "below" : "above"} <b>${fmt(p, r.inv)}</b>`);
     if (r.rr != null) d.push(`R:R from here <b>${r.rr}</b>`);
   } else if (r.status === "forming") {
-    d.push(`Swept previous ${side} <b>${fmt(p, r.level)}</b>, back inside`);
+    d.push(`Swept C1 ${side} <b>${fmt(p, r.level)}</b>, back inside`);
     d.push(`Target <b>${fmt(p, r.t2)}</b>`);
     d.push(`Closes in <b>${left(endOf(r, tf))}</b>`);
   } else if (r.status === "sweeping") {
-    d.push(`${pips(p, r.price, r.level).toFixed(1)} pips beyond previous ${side} <b>${fmt(p, r.level)}</b>`);
+    d.push(`${pips(p, r.price, r.level).toFixed(1)} pips beyond C1 ${side} <b>${fmt(p, r.level)}</b>`);
     d.push(`Needs to close back inside · closes in <b>${left(endOf(r, tf))}</b>`);
   } else if (r.status === "anticipated") {
-    d.push(`<b>${r.dist}</b> pips from previous ${side} <b>${fmt(p, r.level)}</b>`);
+    d.push(`<b>${r.dist}</b> pips from C1 ${side} <b>${fmt(p, r.level)}</b>`);
     d.push(`Closes in <b>${left(endOf(r, tf))}</b>`);
   } else if (r.status === "done" || r.status === "failed") {
     d.push(r.status === "done" ? `Reached target ${fmt(p, r.t2)}` : `Went beyond the sweep ${fmt(p, r.inv)}`);
   }
+  const ins = insideCount(r);
+  if (ins > 0) d.push(`<span class="muted">C1 is ${ins + (r.status === "anticipated" ? 1 : 1)} candles back (${ins} inside bar${ins > 1 ? "s" : ""} after it)</span>`);
   return `<button class="row" data-sym="${esc(p.sym)}" data-tf="${tf}" style="text-align:left;font:inherit;color:inherit">
     <div class="top"><span class="pair">${esc(p.sym)}</span><span class="badge ${cls(r)}">${label(r)}</span><span class="px">${fmt(p, r.price)}</span></div>
     <div class="det">${d.map(x => `<span>${x}</span>`).join("")}</div>${qline(r)}${m1line(p, r, tf)}</button>`;
@@ -224,30 +226,38 @@ function drawDetail() {
   chart(p, r);
 }
 const LTF_OF = { M: ["D", "Daily"], W: ["4H", "4H"], D: ["1H", "1H"], "4H": ["15m", "15m"], "1H": ["5m", "5m"] };
-function cMap(r, last) {
-  return r.status === "c3close" ? { C1: last - 3, C2: last - 2, C3: last - 1, C4: last } :
-         r.status === "formed" || r.status === "done" || r.status === "failed" ? { C1: last - 2, C2: last - 1, C3: last } :
-         (r.status === "forming" || r.status === "sweeping") ? { C1: last - 1, C2: last } :
-         r.status === "anticipated" ? { C1: last - 1 } : {};
+const C2_BACK = { formed: 1, done: 1, failed: 1, c3close: 2 };
+function cMap(r, last) {            // positions of C1 (the range candle, may be several back), inside bars, C2, C3, C4
+  if (r.c1Back == null) return {};
+  const c1 = last - r.c1Back, st = r.status;
+  if (st === "anticipated") return { C1: c1 };
+  const c2 = last - (C2_BACK[st] || 0), m = { C1: c1 };
+  for (let i = c1 + 1; i < c2; i++) m["in" + (i - c1)] = i;     // inside bars between C1 and C2
+  m.C2 = c2;
+  if (c2 + 1 <= last) m.C3 = c2 + 1;
+  if (c2 + 2 <= last) m.C4 = c2 + 2;
+  return m;
 }
+const insideCount = r => r.c1Back == null ? 0 : Math.max(0, r.c1Back - (C2_BACK[r.status] || 0) - (r.status === "anticipated" ? 0 : 1));
 function chart(p, r) {
   const split = view === "split" && LTF_OF[detail.tf];
   $("#cvWrap2").hidden = !split;
   $("#charts").classList.toggle("two", !!split);
   const W = $("#cv").clientWidth;
-  const all = r.candles || []; const cs = all.slice(-Math.min(all.length, split ? (W < 500 ? 24 : 36) : (W < 500 ? 36 : 56)));
+  const all = r.candles || []; const cs = all.slice(-Math.min(all.length, split ? (W < 500 ? 16 : 30) : (W < 500 ? 30 : 50)));
   if (cs.length < 3) return;
   const last = cs.length - 1, map = cMap(r, last);
   $("#cap1").textContent = `${TF_NAME[detail.tf]} (higher timeframe)`;
   draw($("#cv"), p, r, cs, {
     from: map.C1 ?? last, intraday: detail.tf === "1H" || detail.tf === "4H",
-    labels: Object.entries(map).filter(([, i]) => i >= 0).map(([k, i]) => ({ i, k, at: "candle" })), seps: [] });
+    labels: Object.entries(map).filter(([, i]) => i >= 0).map(([k, i]) => ({ i, k: k.startsWith("in") ? "in" : k, at: "col", small: k.startsWith("in") })),
+    seps: [], c1box: map.C1 != null && map.C1 >= 0 ? map.C1 : null });
   if (!split) return;
   // lower timeframe: candles since the start of C1 (or the last 3 higher-TF candles)
   const [key, name] = LTF_OF[detail.tf];
   const src = key === "15m" || key === "5m" ? (p.ltf && p.ltf[key]) : (p.tf[key] && p.tf[key].candles);
   $("#cap2").textContent = `${name} (lower timeframe) inside the ${TF_NAME[detail.tf]} candles`;
-  const keys = Object.keys(map).length ? Object.entries(map) : [["", last]];
+  const keys = Object.keys(map).length ? Object.entries(map).map(([k, i]) => [k.startsWith("in") ? "" : k, i]) : [["", last]];
   const firstHtf = cs[Math.max(0, Math.min(...keys.map(([, i]) => i)))][0];
   const lt = (src || []).filter(c => c[0] >= firstHtf);
   if (lt.length < 3) { draw($("#cv2"), p, r, [], { empty: `No ${name} candles in this scan yet — they arrive with the next scan.` }); return; }
@@ -264,7 +274,8 @@ function draw(cv, p, r, cs, o) {
   const C = { ink: css("--ink"), sec: css("--sec"), line: css("--line"), up: css("--green"), dn: css("--red"), blue: css("--blue"), amber: css("--amber"), tint: css("--tint") };
   if (o.empty) { g.fillStyle = C.sec; g.font = "13px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillText(o.empty, 10, H / 2); return; }
   const last = cs.length - 1;
-  const padR = 64, padB = 22, padT = 18, plotW = W - padR - 6, plotH = H - padB - padT;
+  const colLabels = (o.labels || []).some(L => L.at === "col");
+  const padR = 64, padB = 22, padT = colLabels ? 32 : 18, plotW = W - padR - 6, plotH = H - padB - padT;
   const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext, r.q && r.q.keyLvl, r.q2 && r.q2.tspot].filter(v => v != null);
   let hi = Math.max(...cs.map(c => c[2]), ...lv), lo = Math.min(...cs.map(c => c[3]), ...lv);
   const padY = (hi - lo) * 0.06 || hi * 0.001; hi += padY; lo -= padY;
@@ -284,6 +295,10 @@ function draw(cv, p, r, cs, o) {
     const y1 = Y(Math.max(c[1], c[4])), y2 = Y(Math.min(c[1], c[4]));
     g.fillRect(X(i) - bw / 2, y1, bw, Math.max(1, y2 - y1));
   });
+  if (o.c1box != null) {          // outline the C1 range candle
+    const c = cs[o.c1box]; g.save(); g.strokeStyle = C.amber; g.lineWidth = 1.5;
+    g.strokeRect(X(o.c1box) - step / 2 + 1, Y(c[2]) - 3, step - 2, Y(c[3]) - Y(c[2]) + 6); g.restore();
+  }
   const tags = [];
   const hline = (v, col, txt, dash) => { if (v == null) return; const y = Y(v); g.save(); g.strokeStyle = col; g.setLineDash(dash ? [5, 4] : []); g.lineWidth = 1.4;
     g.beginPath(); g.moveTo(x0, y); g.lineTo(plotW + 6, y); g.stroke(); g.restore(); tags.push([y, col, txt]); };
@@ -293,7 +308,7 @@ function draw(cv, p, r, cs, o) {
     hline(r.c1l, r.dir === 1 ? C.amber : C.blue, r.dir === 1 ? "CRT Low" : "TP CRT L");
     hline((r.c1h + r.c1l) / 2, C.sec, "50%", true);
   }
-  if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key.replace(" FVG", "FVG"), true);
+  if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key, true);
   if (r.q2 && ["formed", "c3close"].includes(r.status) && r.q2.tspot != null) hline(r.q2.tspot, C.amber, "T-spot", true);
   const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" || r.status === "c3close" ? r.inv : r.sweep;
   if (sweepPx != null && !o.m1) hline(sweepPx, C.dn, "Sweep", true);
@@ -329,8 +344,13 @@ function draw(cv, p, r, cs, o) {
   }
   g.font = "bold 12px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.ink; g.textAlign = "center";
   (o.labels || []).forEach(L => {
+    if (L.at === "col") {         // label row above each candle (higher-timeframe chart)
+      g.save(); if (L.small) { g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; }
+      g.fillText(L.k, X(L.i), L.i % 2 ? 26 : 13); g.restore(); return;   // alternate rows so neighbours never overlap
+    }
     if (L.at === "top") { const xm = (X(L.i) - step / 2 + X(Math.min(L.j, cs.length) - 1) + step / 2) / 2; g.fillText(L.k, xm, 13); }
-    else { const c = cs[L.i]; g.fillText(L.k, X(L.i), r.dir === 1 ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(padT + 2, Y(c[2]) - 6)); }
+    else { const c = cs[L.i]; g.save(); if (L.small) { g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec; }
+      g.fillText(L.k, X(L.i), r.dir === 1 ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(padT + 2, Y(c[2]) - 6)); g.restore(); }
   });
   g.font = "10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.sec;
   const every = Math.max(1, Math.ceil(cs.length / 4));

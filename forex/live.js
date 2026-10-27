@@ -55,52 +55,67 @@ function build(bars) {
 
 function round(v, dg) { const f = Math.pow(10, dg); return Math.round(v * f) / f; }
 
+const LOOK = 8;   // how far back C1 (the range candle) can be when inside bars follow it
+/* C1 = the range candle: start at candle i and walk back while the candle sits inside the one before it */
+function mother(cs, i) {
+  let m = i;
+  while (m - 1 >= 0 && i - (m - 1) <= LOOK && cs[m][2] <= cs[m - 1][2] && cs[m][3] >= cs[m - 1][3]) m--;
+  return m;
+}
 function classify(cs, tf, pip) {
-  if (cs.length < 3) return null;
-  const [, o0, h0, l0, c0] = cs[cs.length - 1], [, o1, h1, l1, c1] = cs[cs.length - 2], [, , h2, l2] = cs[cs.length - 3];
-  const price = c0;
+  const n = cs.length;
+  if (n < 3) return null;
+  const [, o0, h0, l0, price] = cs[n - 1];
   let res = { status: "none", dir: 0 };
-  let bull = l1 < l2 && l2 < c1 && c1 < h2, bear = h1 > h2 && l2 < c1 && c1 < h2;
-  if (bull && bear) { const rg = h1 - l1, pos = rg > 0 ? (c1 - l1) / rg : 0.5; bull = pos >= 2 / 3; bear = pos <= 1 / 3; }   // outside bar
+  // formed: C2 = the last closed candle, the first one to sweep C1's range, closed back inside
   let formed = null;
-  if (bull || bear) {
-    const d = bull ? 1 : -1, t2 = d === 1 ? h2 : l2, t1 = (h2 + l2) / 2, inv = d === 1 ? l1 : h1;
-    const hit2 = d === 1 ? h0 >= t2 : l0 <= t2, hit1 = d === 1 ? h0 >= t1 : l0 <= t1, failed = d === 1 ? l0 < inv : h0 > inv;
-    const risk = Math.abs(price - inv);
-    formed = { status: "formed", dir: d, t1, t2, inv, c1h: h2, c1l: l2, sweep: d === 1 ? l1 : h1, hit1, hit2, failed,
-      toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null };
-  }
+  let m = mother(cs, n - 3);
+  { const [, , H1, L1] = cs[m], [, o2, h2, l2, c2] = cs[n - 2];
+    let bull = l2 < L1 && L1 < c2 && c2 < H1, bear = h2 > H1 && L1 < c2 && c2 < H1;
+    if (bull && bear) { const rg = h2 - l2, pos = rg > 0 ? (c2 - l2) / rg : 0.5; bull = pos >= 2 / 3; bear = pos <= 1 / 3; }
+    if (bull || bear) {
+      const d = bull ? 1 : -1, t2 = d === 1 ? H1 : L1, t1 = (H1 + L1) / 2, inv = d === 1 ? l2 : h2;
+      const hit2 = d === 1 ? h0 >= t2 : l0 <= t2, hit1 = d === 1 ? h0 >= t1 : l0 <= t1, failed = d === 1 ? l0 < inv : h0 > inv;
+      const risk = Math.abs(price - inv);
+      formed = { status: "formed", dir: d, t1, t2, inv, c1h: H1, c1l: L1, sweep: inv, c1Back: n - 1 - m, hit1, hit2, failed,
+        toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null };
+    } }
+  // live: is the current candle the first to sweep C1's range?
   let live = null;
-  const sl = l0 < l1, sh = h0 > h1;
-  if (sl || sh) {
-    let d;
-    if (sl && sh) { const rg0 = h0 - l0, pos0 = rg0 > 0 ? (price - l0) / rg0 : 0.5; d = pos0 >= 2 / 3 ? 1 : pos0 <= 1 / 3 ? -1 : 0; }
-    else d = sl ? 1 : -1;
-    if (d) {
-      const level = d === 1 ? l1 : h1, inside = l1 < price && price < h1;
-      live = { status: inside ? "forming" : "sweeping", dir: d, level, sweep: d === 1 ? l0 : h0, t2: d === 1 ? h1 : l1, t1: (h1 + l1) / 2, c1h: h1, c1l: l1 };
-    }
-  } else {
-    const rng = h1 - l1;
-    if (rng > 0) {
-      const dl = (price - l1) / rng, dh = (h1 - price) / rng;
-      if (dl <= NEAR || dh <= NEAR) {
-        const d = dl <= dh ? 1 : -1, level = d === 1 ? l1 : h1;
-        live = { status: "anticipated", dir: d, level, dist: round(Math.abs(price - level) / pip, 1), c1h: h1, c1l: l1, t2: d === 1 ? h1 : l1 };
+  m = mother(cs, n - 2);
+  { const [, , H1, L1] = cs[m];
+    const sl = l0 < L1, sh = h0 > H1;
+    if (sl || sh) {
+      let d;
+      if (sl && sh) { const rg0 = h0 - l0, pos0 = rg0 > 0 ? (price - l0) / rg0 : 0.5; d = pos0 >= 2 / 3 ? 1 : pos0 <= 1 / 3 ? -1 : 0; }
+      else d = sl ? 1 : -1;
+      if (d) {
+        const level = d === 1 ? L1 : H1;
+        live = { status: L1 < price && price < H1 ? "forming" : "sweeping", dir: d, level, sweep: d === 1 ? l0 : h0,
+          t2: d === 1 ? H1 : L1, t1: (H1 + L1) / 2, c1h: H1, c1l: L1, c1Back: n - 1 - m };
       }
-    }
-  }
+    } else {
+      const rng = H1 - L1;
+      if (rng > 0) {
+        const dl = (price - L1) / rng, dh = (H1 - price) / rng;
+        if (dl <= NEAR || dh <= NEAR) {
+          const d = dl <= dh ? 1 : -1, level = d === 1 ? L1 : H1;
+          live = { status: "anticipated", dir: d, level, dist: round(Math.abs(price - level) / pip, 1), c1h: H1, c1l: L1, t2: d === 1 ? H1 : L1, c1Back: n - 1 - m };
+        }
+      }
+    } }
   // candle 3 closure (TTrades): C2 swept C1 but closed outside it; C3 closed back through C2's open
   let c3 = null;
-  if (cs.length >= 4) {
-    const [, , ha, la] = cs[cs.length - 4], [, ob, hb, lb, cb] = cs[cs.length - 3], [, , hc, lc, cc] = cs[cs.length - 2];
+  if (n >= 4) {
+    m = mother(cs, n - 4);
+    const [, , ha, la] = cs[m], [, ob, hb, lb, cb] = cs[n - 3], [, , hc, lc, cc] = cs[n - 2];
     for (const d of [1, -1]) {
       const ok = d === 1 ? (lb < la && cb < la && cc > ob && lc >= lb) : (hb > ha && cb > ha && cc < ob && hc <= hb);
       if (ok) {
         const t2 = d === 1 ? ha : la, inv = d === 1 ? lb : hb;
         const hit2 = d === 1 ? h0 >= t2 : l0 <= t2, failed = d === 1 ? l0 < inv : h0 > inv, risk = Math.abs(price - inv);
         if (!hit2 && !failed && (t2 - price) * d > 0)
-          c3 = { status: "c3close", dir: d, t1: (ha + la) / 2, t2, inv, c1h: ha, c1l: la, sweep: inv, hit1: false, hit2: false, failed: false,
+          c3 = { status: "c3close", dir: d, t1: (ha + la) / 2, t2, inv, c1h: ha, c1l: la, sweep: inv, c1Back: n - 1 - m, hit1: false, hit2: false, failed: false,
                  toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null };
         break;
       }
@@ -148,6 +163,7 @@ function model1(lt, d, t0, lvl, t2, pip) {
 }
 /* Is C1 a proper C1? size (>= 0.7 x average range of the 20 candles before it), not an inside bar, swept at a
  * key level (previous day/week/month high-low or an unfilled higher-timeframe FVG), and the HTF bias. */
+const C2_BACK = { formed: 1, done: 1, failed: 1, c3close: 2 };   // how many candles back C2 is (0 = current)
 const PARENT = { "1H": "D", "4H": "D", D: "W", W: "M", M: null }, GRAND = { "1H": "W", "4H": "W", D: "M", W: null, M: null };
 const LVL_NAME = { D: ["PDH", "PDL"], W: ["PWH", "PWL"], M: ["PMH", "PML"] };
 function ttBias(S, k) {
@@ -161,13 +177,14 @@ function ttBias(S, k) {
 const lastAtOrBefore = (S, t) => { let k = -1; for (let i = 0; i < S.length; i++) if (S[i][0] <= t) k = i; return k < 0 ? null : k; };
 function c1Quality(lists, tf, r) {
   const cs = lists[tf], n = cs.length, st = r.status;
-  const c1i = st === "c3close" ? n - 4 : ["formed", "done", "failed"].includes(st) ? n - 3 : n - 2;
-  if (c1i < 1 || !r.dir) return null;
+  if (r.c1Back == null || !r.dir) return null;
+  const c1i = n - 1 - r.c1Back, c2i = n - 1 - (C2_BACK[st] || 0);
+  if (c1i < 1) return null;
   const d = r.dir, [t, , h, l] = cs[c1i], rng = h - l;
   const prev = cs.slice(Math.max(0, c1i - 20), c1i);
   const avg = prev.length ? prev.reduce((a, x) => a + x[2] - x[3], 0) / prev.length : rng;
   const size = rng >= 0.7 * avg, inside = h <= cs[c1i - 1][2] && l >= cs[c1i - 1][3];
-  const c2 = c1i + 1 < n ? cs[c1i + 1] : cs[n - 1];
+  const c2 = cs[c2i];
   const ext = d === 1 ? c2[3] : c2[2], tol = 0.25 * rng, t2s = c2[0];
   const levels = [];
   for (const X of [PARENT[tf], GRAND[tf]]) {
@@ -204,9 +221,10 @@ function c1Quality(lists, tf, r) {
 function c2Checks(lists, tf, r, pip) {
   const cs = lists[tf], n = cs.length, st = r.status, d = r.dir;
   if (!d) return null;
-  const c1i = st === "c3close" ? n - 4 : ["formed", "done", "failed"].includes(st) ? n - 3 : n - 2;
-  if (c1i < 0 || c1i + 1 >= n) return null;
-  const [, , h1, l1] = cs[c1i], [t2c, o2, h2, l2, c2] = cs[c1i + 1], rng = h1 - l1;
+  if (r.c1Back == null) return null;
+  const c1i = n - 1 - r.c1Back, c2i = n - 1 - (C2_BACK[st] || 0);
+  if (c1i < 0 || c2i <= c1i) return null;
+  const [, , h1, l1] = cs[c1i], [t2c, o2, h2, l2, c2] = cs[c2i], rng = h1 - l1;
   const depth = d === 1 ? l1 - l2 : h2 - h1;
   const sweep = depth >= Math.max(2 * pip, 0.05 * rng) && depth <= rng;
   const r2 = h2 - l2, pos = r2 > 0 ? (c2 - l2) / r2 : 0.5, reject = d === 1 ? pos >= 0.5 : pos <= 0.5;
