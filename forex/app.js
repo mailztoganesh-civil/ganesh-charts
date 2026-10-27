@@ -4,8 +4,9 @@
  */
 (() => {
 "use strict";
-const TFS = ["1H", "4H", "D", "W"];
-const TF_NAME = { "1H": "1H", "4H": "4H", D: "Daily", W: "Weekly" };
+const TFS = ["1H", "4H", "D", "W", "M"];
+const TF_NAME = { "1H": "1H", "4H": "4H", D: "Daily", W: "Weekly", M: "Monthly" };
+const M1_TF = { M: "Daily", W: "4H", D: "1H", "4H": "15m", "1H": "5m" };
 const ORDER = { formed: 0, forming: 1, sweeping: 2, anticipated: 3, done: 4, failed: 5, none: 6 };
 const SETUP = ["formed", "forming", "sweeping", "anticipated"];
 const $ = s => document.querySelector(s);
@@ -28,7 +29,7 @@ function left(ms) {
 function endOf(r, t) {
   if (r.end) return r.end;
   const c = r.candles && r.candles[r.candles.length - 1];
-  return c ? c[0] * 1000 + (t === "W" ? 5 : 1) * 86400000 : null;
+  return c ? c[0] * 1000 + (t === "W" ? 5 : t === "M" ? 30.4 : 1) * 86400000 : null;
 }
 function label(r, short) {
   const up = r.dir === 1, a = up ? "▲" : "▼";
@@ -90,21 +91,38 @@ function render() {
   document.querySelectorAll("#tfSeg button").forEach(b => b.classList.toggle("on", b.dataset.tf === tf));
   const rows = data.pairs.map(p => ({ p, r: p.tf[tf] })).filter(x => x.r);
   // chips with counts
-  const count = s => rows.filter(x => (s === "all" ? SETUP.includes(x.r.status) : x.r.status === s) && (dir === 0 || x.r.dir === dir)).length;
-  const chips = [["all", "All setups"], ["formed", "Formed"], ["forming", "Forming"], ["sweeping", "Sweeping"], ["anticipated", "Anticipated"]];
+  const count = s => rows.filter(x => match(x.r, s)).length;
+  const chips = [["all", "All setups"], ["m1", "Model-1 ✓"], ["m1p", "Model-1 pending"], ["formed", "Formed"], ["forming", "Forming"], ["sweeping", "Sweeping"], ["anticipated", "Anticipated"]];
   $("#stChips").innerHTML = chips.map(([k, n]) => `<button class="chip${st === k ? " on" : ""}" data-st="${k}">${n}<b>${count(k)}</b></button>`).join("");
   // list
-  const show = rows.filter(x => (st === "all" ? SETUP.includes(x.r.status) : x.r.status === st) && (dir === 0 || x.r.dir === dir))
-    .sort((a, b) => ORDER[a.r.status] - ORDER[b.r.status] || a.p.sym.localeCompare(b.p.sym));
+  const show = rows.filter(x => match(x.r, st))
+    .sort((a, b) => m1rank(a.r) - m1rank(b.r) || ORDER[a.r.status] - ORDER[b.r.status] || a.p.sym.localeCompare(b.p.sym));
   $("#list").innerHTML = show.length ? show.map(x => card(x.p, x.r)).join("")
-    : `<div class="card empty">No ${st === "all" ? "" : st + " "}setups on ${TF_NAME[tf]} right now.</div>`;
+    : `<div class="card empty">No ${st === "all" ? "" : st === "m1" ? "confirmed Model-1 " : st === "m1p" ? "pending Model-1 " : st + " "}setups on ${TF_NAME[tf]} right now.</div>`;
   // matrix
   $("#mx").innerHTML = `<thead><tr><th>Pair</th>${TFS.map(t => `<th>${TF_NAME[t]}</th>`).join("")}</tr></thead><tbody>` +
     data.pairs.map(p => `<tr><td>${esc(p.sym)}</td>${TFS.map(t => {
       const r = p.tf[t]; if (!r) return "<td></td>";
-      return `<td><button class="dot ${cls(r)}" data-sym="${esc(p.sym)}" data-tf="${t}">${label(r, true)}</button></td>`;
+      const m = r.m1 && !r.m1.hit ? (r.m1.confirmed ? "<br><small>M1 ✓</small>" : "<br><small>M1 …</small>") : "";
+      return `<td><button class="dot ${cls(r)}" data-sym="${esc(p.sym)}" data-tf="${t}">${label(r, true)}${m}</button></td>`;
     }).join("")}</tr>`).join("") + "</tbody>";
   if (detail) drawDetail();
+}
+function match(r, s) {
+  if (dir !== 0 && r.dir !== dir) return false;
+  if (s === "all") return SETUP.includes(r.status);
+  if (s === "m1") return !!(r.m1 && r.m1.confirmed && !r.m1.hit);
+  if (s === "m1p") return !!(r.m1 && !r.m1.confirmed);
+  return r.status === s;
+}
+const m1rank = r => r.m1 && r.m1.confirmed && !r.m1.hit ? 0 : r.m1 && !r.m1.confirmed ? 1 : 2;
+function ago2(t) { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 60 ? m + " min ago" : m < 1440 ? Math.floor(m / 60) + "h ago" : Math.floor(m / 1440) + "d ago"; }
+function m1line(p, r, t) {
+  const m = r.m1; if (!m) return "";
+  const a = m.dir === 1 ? "▲" : "▼", tfn = M1_TF[t];
+  if (m.confirmed && m.hit) return `<span class="m1 done">Model-1 (${tfn}) reached target</span>`;
+  if (m.confirmed) return `<span class="m1 ok">${a} Model-1 ✓ on ${tfn} · ${ago2(m.tConf)} · entry <b>${fmt(p, m.entry)}</b> · SL <b>${fmt(p, m.ext)}</b> · TP <b>${fmt(p, m.target)}</b>${m.rr != null ? ` · R:R <b>${m.rr}</b>` : ""}</span>`;
+  return `<span class="m1 wait">Model-1 pending on ${tfn}: needs a close ${m.dir === 1 ? "above" : "below"} <b>${fmt(p, m.level)}</b> (${m.need} pips)</span>`;
 }
 function card(p, r) {
   const d = [];
@@ -130,11 +148,17 @@ function card(p, r) {
   }
   return `<button class="row" data-sym="${esc(p.sym)}" data-tf="${tf}" style="text-align:left;font:inherit;color:inherit">
     <div class="top"><span class="pair">${esc(p.sym)}</span><span class="badge ${cls(r)}">${label(r)}</span><span class="px">${fmt(p, r.price)}</span></div>
-    <div class="det">${d.map(x => `<span>${x}</span>`).join("")}</div></button>`;
+    <div class="det">${d.map(x => `<span>${x}</span>`).join("")}</div>${m1line(p, r, tf)}</button>`;
 }
 
 /* ---------- detail sheet + chart ---------- */
-function openDetail(sym, t) { detail = { sym, tf: t }; $("#sheet").hidden = false; drawDetail(); }
+function openDetail(sym, t) {
+  detail = { sym, tf: t };
+  const p = data.pairs.find(x => x.sym === sym), r = p && p.tf[t];
+  if (r && r.m1) view = "split";              // Model-1 lives on the lower timeframe: show both charts
+  document.querySelectorAll("#dView button").forEach(x => x.classList.toggle("on", x.dataset.v === view));
+  $("#sheet").hidden = false; drawDetail();
+}
 function closeDetail() { detail = null; $("#sheet").hidden = true; }
 function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
 function drawDetail() {
@@ -152,11 +176,16 @@ function drawDetail() {
   if (r.t2 != null) L.push(["Pips to T2", pips(p, r.price, r.t2).toFixed(1)]);
   if (r.rr != null) L.push(["R:R from here", r.rr]);
   L.push(["Candle closes in", left(endOf(r, detail.tf))]);
+  if (r.m1) {
+    const m = r.m1;
+    L.push([`Model-1 (${M1_TF[detail.tf]})`, m.confirmed ? (m.hit ? "✓ hit target" : "✓ confirmed") : "pending"], ["Model-1 level", fmt(p, m.level) + (m.wick ? " (wick)" : "")]);
+    if (m.confirmed) L.push(["Entry", fmt(p, m.entry)], ["Stop (sweep)", fmt(p, m.ext)], ["Target", fmt(p, m.target)], ["R:R", m.rr ?? "–"]);
+  }
   $("#dLv").innerHTML = L.map(([k, v]) => `<div>${k}<b>${v}</b></div>`).join("");
   $("#dNote").textContent = `Prices from Yahoo Finance (${p.src}). Scanned ${new Date(data.updated).toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}.`;
   chart(p, r);
 }
-const LTF_OF = { W: ["4H", "4H"], D: ["1H", "1H"], "4H": ["15m", "15m"], "1H": ["5m", "5m"] };
+const LTF_OF = { M: ["D", "Daily"], W: ["4H", "4H"], D: ["1H", "1H"], "4H": ["15m", "15m"], "1H": ["5m", "5m"] };
 function cMap(r, last) {
   return r.status === "formed" || r.status === "done" || r.status === "failed" ? { C1: last - 2, C2: last - 1, C3: last } :
          (r.status === "forming" || r.status === "sweeping") ? { C1: last - 1, C2: last } :
@@ -186,7 +215,7 @@ function chart(p, r) {
   const idxOf = t => { const k = lt.findIndex(c => c[0] >= t); return k < 0 ? lt.length : k; };
   const starts = keys.map(([k, i]) => ({ k, i: idxOf(cs[i][0]) }));
   const labels = starts.filter(x => x.k).map((x, j) => ({ k: x.k, at: "top", i: x.i, j: j + 1 < starts.length ? starts[j + 1].i : lt.length }));
-  draw($("#cv2"), p, r, lt, { from: starts[0].i, intraday: true, labels, seps: starts.map(x => x.i) });
+  draw($("#cv2"), p, r, lt, { from: starts[0].i, intraday: key !== "D", labels, seps: starts.map(x => x.i), m1: r.m1 });
 }
 function draw(cv, p, r, cs, o) {
   const dpr = window.devicePixelRatio || 1;
@@ -197,7 +226,7 @@ function draw(cv, p, r, cs, o) {
   if (o.empty) { g.fillStyle = C.sec; g.font = "13px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillText(o.empty, 10, H / 2); return; }
   const last = cs.length - 1;
   const padR = 64, padB = 22, padT = 18, plotW = W - padR - 6, plotH = H - padB - padT;
-  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l].filter(v => v != null);
+  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext].filter(v => v != null);
   let hi = Math.max(...cs.map(c => c[2]), ...lv), lo = Math.min(...cs.map(c => c[3]), ...lv);
   const padY = (hi - lo) * 0.06 || hi * 0.001; hi += padY; lo -= padY;
   const step = plotW / (cs.length + 4), bw = Math.max(1.5, step * 0.62);
@@ -219,10 +248,44 @@ function draw(cv, p, r, cs, o) {
   const tags = [];
   const hline = (v, col, txt, dash) => { if (v == null) return; const y = Y(v); g.save(); g.strokeStyle = col; g.setLineDash(dash ? [5, 4] : []); g.lineWidth = 1.4;
     g.beginPath(); g.moveTo(x0, y); g.lineTo(plotW + 6, y); g.stroke(); g.restore(); tags.push([y, col, txt]); };
-  if (r.t2 != null) hline(r.t2, C.blue, "T2");
-  if (r.t1 != null) hline(r.t1, C.sec, "Mid", true);
-  if (r.inv != null) hline(r.inv, C.dn, "Inv", true);
-  if (r.level != null && r.status !== "formed") hline(r.level, C.amber, r.dir === 1 ? "Low" : "High", true);
+  // CRT range: target side in blue, swept side in amber
+  if (r.c1h != null) {
+    hline(r.c1h, r.dir === 1 ? C.blue : C.amber, r.dir === 1 ? "TP CRT H" : "CRT High");
+    hline(r.c1l, r.dir === 1 ? C.amber : C.blue, r.dir === 1 ? "CRT Low" : "TP CRT L");
+    hline((r.c1h + r.c1l) / 2, C.sec, "50%", true);
+  }
+  const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" ? r.inv : r.sweep;
+  if (sweepPx != null && !o.m1) hline(sweepPx, C.dn, "Sweep", true);
+  // Model-1 marks (lower-timeframe chart)
+  const m = o.m1;
+  if (m) {
+    const idx = t => cs.findIndex(c => c[0] === t);
+    const iR0 = idx(m.tRun), iR1 = idx(m.tRunEnd), iX = idx(m.tExt), iC = m.confirmed ? idx(m.tConf) : -1;
+    const mc = m.dir === 1 ? C.up : C.dn;
+    hline(m.ext, C.dn, "SL", true);
+    if (iR0 >= 0) {            // Model-1 line from the opposite candle(s)
+      const y = Y(m.level); g.save(); g.strokeStyle = mc; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(X(iR0) - step / 2, y); g.lineTo(plotW + 6, y); g.stroke(); g.restore(); tags.push([y, mc, "Model-1"]);
+      const hi2 = Math.max(...cs.slice(iR0, iR1 + 1).map(c => c[2])), lo2 = Math.min(...cs.slice(iR0, iR1 + 1).map(c => c[3]));
+      g.save(); g.strokeStyle = C.amber; g.lineWidth = 2; g.strokeRect(X(iR0) - step / 2, Y(hi2) - 3, (iR1 - iR0 + 1) * step, Y(lo2) - Y(hi2) + 6); g.restore();
+      g.fillStyle = C.amber; g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif"; g.textAlign = "center";
+      g.fillText("M1 candle", X(iR0) + (iR1 - iR0) * step / 2, m.dir === 1 ? Y(hi2) - 7 : Y(lo2) + 15); g.textAlign = "left";
+    } else tags.push([Y(m.level), mc, "Model-1"]);
+    if (iX >= 0) {             // sweep extreme
+      const yx = Y(m.ext); g.fillStyle = C.dn; g.beginPath(); g.arc(X(iX), yx, 4, 0, 7); g.fill();
+      g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif"; g.textAlign = "center";
+      g.fillText("Sweep", X(iX), m.dir === 1 ? yx + 15 : yx - 8); g.textAlign = "left";
+    }
+    if (iC >= 0) {             // confirmation candle = entry
+      const c = cs[iC], up = m.dir === 1, ya = up ? Y(c[3]) + 8 : Y(c[2]) - 8;
+      g.fillStyle = mc; g.beginPath();
+      if (up) { g.moveTo(X(iC), ya); g.lineTo(X(iC) - 6, ya + 10); g.lineTo(X(iC) + 6, ya + 10); }
+      else { g.moveTo(X(iC), ya); g.lineTo(X(iC) - 6, ya - 10); g.lineTo(X(iC) + 6, ya - 10); }
+      g.fill(); g.font = "bold 11px -apple-system,Segoe UI,Roboto,sans-serif"; g.textAlign = "center";
+      g.fillText("Entry", X(iC), up ? ya + 22 : ya - 14); g.textAlign = "left";
+      g.save(); g.strokeStyle = mc; g.setLineDash([2, 3]); g.beginPath(); g.moveTo(X(iC), Y(c[4])); g.lineTo(plotW + 6, Y(c[4])); g.stroke(); g.restore();
+    }
+  }
   g.font = "bold 12px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = C.ink; g.textAlign = "center";
   (o.labels || []).forEach(L => {
     if (L.at === "top") { const xm = (X(L.i) - step / 2 + X(Math.min(L.j, cs.length) - 1) + step / 2) / 2; g.fillText(L.k, xm, 13); }
@@ -237,7 +300,7 @@ function draw(cv, p, r, cs, o) {
   tags.push([Y(r.price), C.blue, fmt(p, cs[last] ? cs[last][4] : r.price)]);
   tags.sort((a, b) => a[0] - b[0]);
   for (let k = 1; k < tags.length; k++) if (tags[k][0] - tags[k - 1][0] < 17) tags[k][0] = tags[k - 1][0] + 17;
-  g.font = "bold 11px -apple-system,Segoe UI,Roboto,sans-serif";
+  g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif";
   tags.forEach(([y, col, txt]) => { g.fillStyle = col; g.fillRect(plotW + 6, y - 8, padR, 16); g.fillStyle = "#fff"; g.fillText(txt, plotW + 10, y + 4); });
 }
 

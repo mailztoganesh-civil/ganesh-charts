@@ -29,7 +29,7 @@
   header button { background:rgba(255,255,255,.16); color:#fff; border:0; border-radius:10px; padding:8px 12px; font-weight:600; font-size:14px; }
   main { padding:12px max(12px,env(safe-area-inset-right)) calc(env(safe-area-inset-bottom,0px) + 30px) max(12px,env(safe-area-inset-left)); max-width:760px; margin:0 auto; display:grid; gap:12px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px; min-width:0; }
-  .seg { display:grid; grid-template-columns:repeat(4,1fr); background:var(--tint); border-radius:12px; padding:4px; gap:4px; }
+  .seg { display:grid; grid-template-columns:repeat(5,1fr); background:var(--tint); border-radius:12px; padding:4px; gap:4px; }
   .seg button { border:0; background:transparent; color:var(--sec); font-weight:700; font-size:14px; padding:9px 4px; border-radius:9px; }
   .seg button.on { background:var(--blue); color:#fff; }
   .chips { display:flex; gap:6px; flex-wrap:wrap; }
@@ -58,6 +58,9 @@
   .row .det { font-size:13px; color:var(--ink2); display:flex; flex-wrap:wrap; gap:4px 12px; }
   .row .det b { font-variant-numeric:tabular-nums; color:var(--ink); }
   .muted { color:var(--sec); font-size:13px; }
+  .m1 { display:block; font-size:13px; padding:7px 9px; border-radius:9px; margin-top:2px; }
+  .m1.ok { background:var(--gsoft); color:var(--ink); } .m1.wait { background:var(--asoft); color:var(--ink); } .m1.done { background:var(--nsoft); color:var(--sec); }
+  .dot small { font-size:10px; font-weight:800; opacity:.9; }
   .empty { color:var(--sec); text-align:center; padding:18px 8px; }
   /* detail */
   .sheet { position:fixed; inset:0; background:rgba(10,6,20,.5); z-index:20; display:flex; align-items:flex-end; justify-content:center; }
@@ -87,7 +90,7 @@
 </header>
 <main>
   <div class="seg" id="tfSeg" role="tablist" aria-label="Timeframe">
-    <button data-tf="1H">1H</button><button data-tf="4H" class="on">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button>
+    <button data-tf="1H">1H</button><button data-tf="4H" class="on">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button><button data-tf="M">Monthly</button>
   </div>
   <div class="chips" id="stChips" aria-label="Status filter"></div>
   <div class="chips" id="dirChips" aria-label="Direction filter">
@@ -108,6 +111,7 @@
     <b>Formed</b> – the last closed candle (C2) swept the previous candle's high/low and closed back inside. The current candle is C3, heading for the other side of C1.<br>
     <b>Forming</b> – the current candle has swept the previous high/low and is back inside now. Becomes Formed if it closes there.<br>
     <b>Sweeping</b> – the current candle is beyond the previous high/low, not back inside yet.<br>
+    <b>Model-1</b> – on the lower timeframe (Monthly→Daily, Weekly→4H, Daily→1H, 4H→15m, 1H→5m): after the sweep, the opening price of the last opposite candle (or candle series) before the sweep extreme. A close back through it is the entry; stop beyond the sweep, target the other side of the CRT range. When that candle is mostly wick, its high/low is used instead.<br>
     <b>Anticipated</b> – no sweep yet, price is within <span id="nearTxt">25%</span> of the previous candle's high/low.<br>
     Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Live prices refresh every minute through your Cloudflare Worker; the GitHub scan is the backup. Gold uses COMEX gold futures.
   </section>
@@ -116,7 +120,7 @@
 <div class="sheet" id="sheet" hidden>
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="dTitle">
     <div class="hd"><h3 id="dTitle">EURUSD</h3><span class="badge" id="dBadge"></span><button class="x" id="dClose" type="button">Close</button></div>
-    <div class="seg" id="dTf"><button data-tf="1H">1H</button><button data-tf="4H">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button></div>
+    <div class="seg" id="dTf"><button data-tf="1H">1H</button><button data-tf="4H">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button><button data-tf="M">Month</button></div>
     <div class="seg two" id="dView"><button data-v="single">Single chart</button><button data-v="split">HTF + LTF</button></div>
     <div id="charts" class="charts">
       <div><div class="cap" id="cap1"></div><canvas id="cv" aria-label="Higher timeframe chart"></canvas></div>
@@ -126,8 +130,8 @@
     <div class="muted" id="dNote"></div>
   </div>
 </div>
-<script src="live.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="live.js?v=4"></script>
+<script src="app.js?v=4"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

@@ -24,7 +24,7 @@ PAIRS = [  # (name, yahoo symbol, pip size)
     ("XAUUSD", "GC=F", 0.1),
 ]
 NEAR = 0.25          # "anticipated" when within 25% of the previous candle's range
-KEEP = {"1H": 100, "4H": 100, "D": 60, "W": 60}   # candles per timeframe sent to the app
+KEEP = {"1H": 100, "4H": 100, "D": 60, "W": 60, "M": 24}   # candles per timeframe sent to the app
 LTF_KEEP = {"15m": 72, "5m": 54}                    # lower-timeframe candles for the HTF+LTF view
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forex", "data", "crt.json")
 NY = "America/New_York"
@@ -48,10 +48,13 @@ def build(h):
     out["D"] = grp(day.values)
     wk = day.to_period("W-SUN").astype(str)                                  # Mon..Sun trading weeks
     out["W"] = grp(wk.values)
+    mo = day.to_period("M").astype(str)                                      # calendar months of trading days
+    out["M"] = grp(mo.values)
     return out
 
 
-TF_HOURS = {"1H": 1, "4H": 4, "D": 24, "W": 120}
+TF_HOURS = {"1H": 1, "4H": 4, "D": 24, "W": 120, "M": 0}
+LTF_FOR = {"M": "D", "W": "4H", "D": "1H", "4H": "15m", "1H": "5m"}   # Model-1 is looked for on this timeframe
 
 
 def classify(df, tf, pip):
@@ -114,7 +117,7 @@ def classify(df, tf, pip):
         res = live
     res["price"] = price
     start = df.index[-1]
-    res["end"] = int((start + pd.Timedelta(hours=TF_HOURS[tf])).timestamp() * 1000) if tf != "W" else None
+    res["end"] = int((start + pd.Timedelta(hours=TF_HOURS[tf])).timestamp() * 1000) if tf not in ("W", "M") else None
     dg = 3 if pip >= 0.01 else 5
     if pip >= 0.1: dg = 2
     res["candles"] = [[int(t.timestamp()), round(float(r.Open), dg), round(float(r.High), dg), round(float(r.Low), dg), round(float(r.Close), dg)]
@@ -123,6 +126,70 @@ def classify(df, tf, pip):
         if isinstance(v, float) and not math.isnan(v):
             res[k] = round(v, dg + 1)
     return res
+
+
+def model1(lt, d, t0, lvl, t2, pip):
+    """Model-1 on the lower timeframe: after the sweep of `lvl` (direction d: 1 = swept a low, look for longs),
+    the opening price of the last opposite-close candle (or candle series) before the sweep extreme.
+    A close back through it confirms. lt = [[t,o,h,l,c], ...] oldest first."""
+    idx = [i for i, c in enumerate(lt) if c[0] >= t0]
+    if len(idx) < 2:
+        return None
+    a = idx[0]
+    if d == -1:
+        J = max(range(a, len(lt)), key=lambda i: lt[i][2]); ext = lt[J][2]; swept = ext > lvl
+    else:
+        J = min(range(a, len(lt)), key=lambda i: lt[i][3]); ext = lt[J][3]; swept = ext < lvl
+    if not swept:
+        return None
+    opp = (lambda c: c[4] > c[1]) if d == -1 else (lambda c: c[4] < c[1])
+    q = J
+    while q >= 0 and not opp(lt[q]):
+        q -= 1
+    if q < 0:
+        return None
+    r0 = q
+    while r0 - 1 >= 0 and opp(lt[r0 - 1]):
+        r0 -= 1
+    c = lt[q]; rng = c[2] - c[3]
+    wick = r0 == q and rng > 0 and abs(c[4] - c[1]) / rng < 0.3
+    if wick:
+        level = c[3] if d == -1 else c[2]
+    else:
+        level = min(x[1] for x in lt[r0:q + 1]) if d == -1 else max(x[1] for x in lt[r0:q + 1])
+    k = next((i for i in range(J + 1, len(lt)) if (lt[i][4] < level if d == -1 else lt[i][4] > level)), None)
+    res = dict(dir=d, ext=ext, tExt=lt[J][0], level=level, tRun=lt[r0][0], tRunEnd=lt[q][0], wick=bool(wick),
+               confirmed=k is not None, target=t2)
+    if k is not None:
+        e = lt[k][4]; risk = abs(ext - e)
+        res.update(tConf=lt[k][0], entry=e, rr=round(abs(t2 - e) / risk, 2) if risk > 0 else None,
+                   hit=bool((t2 - e) * d <= 0 or any((x[3] <= t2 if d == -1 else x[2] >= t2) for x in lt[k + 1:])))
+    else:
+        res["need"] = round(abs(lt[-1][4] - level) / pip, 1)
+    return res
+
+
+def add_model1(row, tfs, ltf_lists):
+    """attach Model-1 (on the paired lower timeframe) to every CRT that has a sweep"""
+    lists = {k: [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in df.iterrows()]
+             for k, df in tfs.items() if k in ("D", "4H", "1H")}
+    lists.update(ltf_lists)
+    dg = 2 if row["pip"] >= 0.1 else 3 if row["pip"] >= 0.01 else 5
+    for tf, r in row["tf"].items():
+        st = r.get("status")
+        if st not in ("formed", "forming", "sweeping", "done") or LTF_FOR.get(tf) not in lists:
+            continue
+        cs = r["candles"]
+        if st in ("formed", "done"):
+            t0, lvl = cs[-2][0], (r["c1l"] if r["dir"] == 1 else r["c1h"])
+        else:
+            t0, lvl = cs[-1][0], r["level"]
+        m = model1(lists[LTF_FOR[tf]], r["dir"], t0, lvl, r["t2"], row["pip"])
+        if m:
+            for k in ("ext", "level", "entry", "target"):
+                if isinstance(m.get(k), float):
+                    m[k] = round(m[k], dg + 1)
+            r["m1"] = m
 
 
 def fetch_yahoo(symbol, interval="1h", period="1y"):
@@ -148,16 +215,20 @@ def main(loader=fetch_yahoo):
                 r = classify(df, tf, pip)
                 if r: row["tf"][tf] = r
             row["price"] = float(h.Close.iloc[-1])
-            if loader is fetch_yahoo:          # lower timeframes for the HTF + LTF view
-                dg = 2 if pip >= 0.1 else 3 if pip >= 0.01 else 5
+            dg = 2 if pip >= 0.1 else 3 if pip >= 0.01 else 5
+            ltf_full = {}
+            if loader is fetch_yahoo:          # lower timeframes for Model-1 and the HTF + LTF view
                 row["ltf"] = {}
                 for iv in ("15m", "5m"):
                     try:
-                        x = fetch_yahoo(ysym, iv, "5d").tail(LTF_KEEP[iv])
-                        row["ltf"][iv] = [[int(t.timestamp()), round(float(r.Open), dg), round(float(r.High), dg),
-                                           round(float(r.Low), dg), round(float(r.Close), dg)] for t, r in x.iterrows()]
+                        x = fetch_yahoo(ysym, iv, "5d")
+                        ltf_full[iv] = [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in x.iterrows()]
+                        row["ltf"][iv] = [[c[0]] + [round(v, dg) for v in c[1:]] for c in ltf_full[iv][-LTF_KEEP[iv]:]]
                     except Exception as e:
                         print(name, iv, "failed:", e)
+            elif hasattr(loader, "ltf"):
+                ltf_full = loader.ltf(name)
+            add_model1(row, tfs, ltf_full)
             out["pairs"].append(row)
             print(name, {k: (v["status"], v["dir"]) for k, v in row["tf"].items()})
         except Exception as e:  # keep going if one pair fails

@@ -12,8 +12,9 @@ const PAIRS = [
   ["XAUUSD", "GC=F", 0.1],
 ];
 const NEAR = 0.25;
-const KEEP = { "1H": 100, "4H": 100, D: 60, W: 60 }, LTF_KEEP = { "15m": 72, "5m": 54 };
-const TF_HOURS = { "1H": 1, "4H": 4, D: 24, W: 120 };
+const KEEP = { "1H": 100, "4H": 100, D: 60, W: 60, M: 24 }, LTF_KEEP = { "15m": 72, "5m": 54 };
+const TF_HOURS = { "1H": 1, "4H": 4, D: 24, W: 120, M: 0 };
+const LTF_FOR = { M: "D", W: "4H", D: "1H", "4H": "15m", "1H": "5m" };
 const H = 3600, DAY = 86400;
 
 /* New York local time (seconds) for a UTC timestamp, DST-aware */
@@ -48,6 +49,7 @@ function build(bars) {
   const dayKey = L => Math.floor((L + 7 * H) / DAY);                 // trading day starts 17:00 NY
   out.D = group(dayKey);
   out.W = group(L => Math.floor((dayKey(L) - 4) / 7));               // Monday..Sunday trading weeks
+  out.M = group(L => { const d = new Date(dayKey(L) * DAY * 1000); return d.getUTCFullYear() * 12 + d.getUTCMonth(); });
   return out;
 }
 
@@ -90,11 +92,49 @@ function classify(cs, tf, pip) {
   else if (live) res = live;
   res.price = price;
   const start = cs[cs.length - 1][0];
-  res.end = tf !== "W" ? (start + TF_HOURS[tf] * H) * 1000 : null;
+  res.end = TF_HOURS[tf] ? (start + TF_HOURS[tf] * H) * 1000 : null;
   const dg = pip >= 0.1 ? 2 : pip >= 0.01 ? 3 : 5;
   res.candles = cs.slice(-KEEP[tf]).map(c => [c[0], round(c[1], dg), round(c[2], dg), round(c[3], dg), round(c[4], dg)]);
   for (const k of ["t1", "t2", "inv", "c1h", "c1l", "sweep", "level", "price"]) if (typeof res[k] === "number") res[k] = round(res[k], dg + 1);
   return res;
+}
+
+/* Model-1 on the lower timeframe: after the sweep of lvl (d = 1: a low was swept, look for longs), the opening
+ * price of the last opposite-close candle (or series) before the sweep extreme; a close back through it confirms. */
+function model1(lt, d, t0, lvl, t2, pip) {
+  const a = lt.findIndex(c => c[0] >= t0);
+  if (a < 0 || lt.length - a < 2) return null;
+  let J = a;
+  for (let i = a; i < lt.length; i++) if (d === -1 ? lt[i][2] > lt[J][2] : lt[i][3] < lt[J][3]) J = i;
+  const ext = d === -1 ? lt[J][2] : lt[J][3];
+  if (!(d === -1 ? ext > lvl : ext < lvl)) return null;
+  const opp = c => d === -1 ? c[4] > c[1] : c[4] < c[1];
+  let q = J; while (q >= 0 && !opp(lt[q])) q--;
+  if (q < 0) return null;
+  let r0 = q; while (r0 - 1 >= 0 && opp(lt[r0 - 1])) r0--;
+  const c = lt[q], rng = c[2] - c[3];
+  const wick = r0 === q && rng > 0 && Math.abs(c[4] - c[1]) / rng < 0.3;
+  const run = lt.slice(r0, q + 1);
+  const level = wick ? (d === -1 ? c[3] : c[2]) : (d === -1 ? Math.min(...run.map(x => x[1])) : Math.max(...run.map(x => x[1])));
+  let k = -1; for (let i = J + 1; i < lt.length; i++) if (d === -1 ? lt[i][4] < level : lt[i][4] > level) { k = i; break; }
+  const res = { dir: d, ext, tExt: lt[J][0], level, tRun: lt[r0][0], tRunEnd: lt[q][0], wick, confirmed: k >= 0, target: t2 };
+  if (k >= 0) {
+    const e = lt[k][4], risk = Math.abs(ext - e);
+    Object.assign(res, { tConf: lt[k][0], entry: e, rr: risk > 0 ? round(Math.abs(t2 - e) / risk, 2) : null,
+      hit: (t2 - e) * d <= 0 || lt.slice(k + 1).some(x => d === -1 ? x[3] <= t2 : x[2] >= t2) });
+  } else res.need = round(Math.abs(lt[lt.length - 1][4] - level) / pip, 1);
+  return res;
+}
+function addModel1(row, tfs, ltfFull) {
+  const lists = { D: tfs.D, "4H": tfs["4H"], "1H": tfs["1H"], ...ltfFull };
+  const dg = row.pip >= 0.1 ? 2 : row.pip >= 0.01 ? 3 : 5;
+  for (const [tf, r] of Object.entries(row.tf)) {
+    if (!["formed", "forming", "sweeping", "done"].includes(r.status) || !lists[LTF_FOR[tf]]) continue;
+    const cs = r.candles;
+    const [t0, lvl] = r.status === "formed" || r.status === "done" ? [cs[cs.length - 2][0], r.dir === 1 ? r.c1l : r.c1h] : [cs[cs.length - 1][0], r.level];
+    const m = model1(lists[LTF_FOR[tf]], r.dir, t0, lvl, r.t2, row.pip);
+    if (m) { for (const k of ["ext", "level", "entry", "target"]) if (typeof m[k] === "number") m[k] = round(m[k], dg + 1); r.m1 = m; }
+  }
 }
 
 /* ---- fetching with an hourly cache: full history once, then only the last day ---- */
@@ -115,11 +155,14 @@ async function pair(base, [name, ysym, pip]) {
   const bars = [...m.values()].sort((a, b) => a.t - b.t);
   if (bars.length < 50) throw new Error(name + ": not enough data");
   const tfs = build(bars), row = { sym: name, pip, src: ysym, tf: {}, price: bars[bars.length - 1].c, ltf: {} };
-  for (const tf of ["1H", "4H", "D", "W"]) { const r = classify(tfs[tf], tf, pip); if (r) row.tf[tf] = r; }
+  for (const tf of ["1H", "4H", "D", "W", "M"]) { const r = classify(tfs[tf], tf, pip); if (r) row.tf[tf] = r; }
   const dg = pip >= 0.1 ? 2 : pip >= 0.01 ? 3 : 5;
   const [m15, m5] = await Promise.all([get(base, ysym, "15m", "5d").catch(() => []), get(base, ysym, "5m", "1d").catch(() => [])]);
-  row.ltf["15m"] = m15.slice(-LTF_KEEP["15m"]).map(b => [b.t, round(b.o, dg), round(b.h, dg), round(b.l, dg), round(b.c, dg)]);
-  row.ltf["5m"] = m5.slice(-LTF_KEEP["5m"]).map(b => [b.t, round(b.o, dg), round(b.h, dg), round(b.l, dg), round(b.c, dg)]);
+  const toL = a => a.map(b => [b.t, b.o, b.h, b.l, b.c]);
+  const ltfFull = { "15m": toL(m15), "5m": toL(m5) };
+  addModel1(row, tfs, ltfFull);
+  row.ltf["15m"] = ltfFull["15m"].slice(-LTF_KEEP["15m"]).map(c => [c[0], round(c[1], dg), round(c[2], dg), round(c[3], dg), round(c[4], dg)]);
+  row.ltf["5m"] = ltfFull["5m"].slice(-LTF_KEEP["5m"]).map(c => [c[0], round(c[1], dg), round(c[2], dg), round(c[3], dg), round(c[4], dg)]);
   return row;
 }
 async function load(base) {
@@ -128,5 +171,5 @@ async function load(base) {
   if (!pairs.length) throw new Error("live data unavailable");
   return { updated: new Date().toISOString(), near: NEAR, pairs, live: true, missing: rows.length - pairs.length };
 }
-window.FXLive = { load, build, classify, PAIRS };
+window.FXLive = { load, build, classify, model1, addModel1, PAIRS };
 })();
