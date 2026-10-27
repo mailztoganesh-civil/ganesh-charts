@@ -202,9 +202,16 @@ function c1Quality(lists, tf, r) {
     if (d === 1 && (name.endsWith("L") || name.endsWith("low")) && ext - tol <= L && L <= l + tol) { key = [name, L]; break; }
     if (d === -1 && (name.endsWith("H") || name.endsWith("high")) && h - tol <= L && L <= ext + tol) { key = [name, L]; break; }
   }
-  const P = PARENT[tf]; let bias = null;
+  const P = PARENT[tf]; let bias = null, keyT = null;
   if (P) {
     const S = lists[P], k = lastAtOrBefore(S, t2s);
+    if (!key && k !== null) {          // an untouched swing high/low (3-candle fractal) on the parent timeframe that C2 swept
+      for (let j = k - 2; j >= Math.max(1, k - 30); j--) {
+        const [tj, , hj, lj] = S[j], later = S.slice(j + 1, k);
+        if (d === 1 && lj < S[j - 1][3] && lj < S[j + 1][3] && later.every(x => x[3] > lj) && ext < lj && lj <= l + tol) { key = ["Swing " + P, lj]; keyT = tj; break; }
+        if (d === -1 && hj > S[j - 1][2] && hj > S[j + 1][2] && later.every(x => x[2] < hj) && ext > hj && hj >= h - tol) { key = ["Swing " + P, hj]; keyT = tj; break; }
+      }
+    }
     if (!key && k !== null) {
       for (let j = k - 1; j > Math.max(1, k - 30); j--) {
         const a2 = S[j - 2], cj = S[j];
@@ -218,7 +225,7 @@ function c1Quality(lists, tf, r) {
   }
   const req = size && !inside;
   const grade = req && key && bias !== false ? "A" : req && (key || bias) ? "B" : "C";
-  return { size, inside, key: key ? key[0] : null, keyLvl: key ? key[1] : null, bias, grade, c1t: t };
+  return { size, inside, key: key ? key[0] : null, keyLvl: key ? key[1] : null, keyT, bias, grade, c1t: t };
 }
 /* C2 quality: clean sweep (>= max(2 pips, 5% of C1) beyond C1, <= C1's range), rejection close (bullish: upper half
  * of C2), outside bar, T-spot (50% of C2's wick), and kill-zone timing of the sweep on 1H / 4H. */

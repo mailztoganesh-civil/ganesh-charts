@@ -259,9 +259,16 @@ def c1_quality(lists, tf, r):
             key = (name, L); break
         if d == -1 and name.endswith(("H", "high")) and h - tol <= L <= ext + tol:
             key = (name, L); break
-    P = PARENT[tf]; bias = None
+    P = PARENT[tf]; bias = None; keyT = None
     if P:
         S = lists[P]; k = max((i for i in range(len(S)) if S[i][0] <= t2s), default=None)
+        if key is None and k is not None:      # untouched swing high/low (3-candle fractal) on the parent TF swept by C2
+            for j in range(k - 2, max(1, k - 30) - 1, -1):
+                tj, hj, lj = S[j][0], S[j][2], S[j][3]; later = S[j + 1:k]
+                if d == 1 and lj < S[j - 1][3] and lj < S[j + 1][3] and all(x[3] > lj for x in later) and ext < lj <= l + tol:
+                    key = ("Swing " + P, lj); keyT = tj; break
+                if d == -1 and hj > S[j - 1][2] and hj > S[j + 1][2] and all(x[2] < hj for x in later) and ext > hj >= h - tol:
+                    key = ("Swing " + P, hj); keyT = tj; break
         if key is None and k is not None:      # unfilled FVG on the parent timeframe
             for j in range(k - 1, max(1, k - 30), -1):
                 a2, cj = S[j - 2], S[j]
@@ -279,7 +286,7 @@ def c1_quality(lists, tf, r):
     req = size and not inside
     grade = "A" if req and key and bias is not False else "B" if req and (key or bias) else "C"
     return dict(size=bool(size), inside=bool(inside), key=key[0] if key else None, keyLvl=key[1] if key else None,
-                bias=bias, grade=grade, c1t=t)
+                keyT=keyT, bias=bias, grade=grade, c1t=t)
 
 
 def ny_hour(t):

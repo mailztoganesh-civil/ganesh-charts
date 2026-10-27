@@ -355,7 +355,18 @@ function draw(cv, p, r, cs, o) {
     hline(r.c1l, r.dir === 1 ? C.amber : C.blue, r.dir === 1 ? "CRT Low" : "TP CRT L");
     hline((r.c1h + r.c1l) / 2, C.sec, "50%", true);
   }
-  if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key, true);
+  if (r.q && r.q.keyLvl != null && r.q.keyT != null) {   // swept swing: line from the swing candle to C2, "Sweep D"
+    const q = r.q, sc = r.dir === 1 ? C.up : C.dn, y = Y(q.keyLvl);
+    let iS = cs.length && cs[0][0] > q.keyT ? -1 : cs.findIndex(c => c[0] >= q.keyT); const xs = iS < 0 ? 0 : X(iS);   // swing older than the chart: line from the left edge
+    const c2b = (o.bands || []).find(b => b.k === "C2");
+    const xe = M.c2 != null ? X(M.c2) + step / 2 : c2b ? X(c2b.i1) + step / 2 : plotW + 6;
+    g.save(); g.strokeStyle = sc; g.lineWidth = 1.6; g.beginPath(); g.moveTo(xs, y); g.lineTo(xe, y); g.stroke();
+    if (iS >= 0) { g.fillStyle = sc; g.beginPath(); g.arc(X(iS), y, 3, 0, 7); g.fill(); }
+    g.setLineDash([2, 3]); g.globalAlpha = .6; g.beginPath(); g.moveTo(xe, y); g.lineTo(plotW + 6, y); g.stroke(); g.restore();
+    if (o.marks) { g.save(); g.font = "bold 10px " + FONT; g.fillStyle = sc;   // label beside the swing point (higher-TF chart)
+      g.fillText(q.key + " · swept by C2", xs + 6, r.dir === 1 ? y + 13 : y - 5); g.restore(); }
+    tags.push([y, sc, q.key]);
+  } else if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key, true);
   const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" || r.status === "c3close" ? r.inv : r.sweep;
   if (sweepPx != null && !o.m1) hline(sweepPx, C.dn, "Sweep", true);
   // Model-1 marks (lower-timeframe chart)

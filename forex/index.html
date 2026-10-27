@@ -116,7 +116,7 @@
     <div class="muted" style="margin-bottom:6px">A setup only shows when it passes the rules you tick. Others are hidden (tap “Show” above the list to see them).</div>
     <div class="muted" style="font-weight:700;margin-top:4px">C1 – the range that gets swept</div>
     <label class="rl"><input type="checkbox" id="reqC1"> <span><b>Proper C1</b> – range at least 0.7× the average of the 20 candles before it, and not an inside bar</span></label>
-    <label class="rl"><input type="checkbox" id="reqKey"> <span><b>Swept at a key level</b> – C2’s sweep reaches the previous day / week / month high or low (PDH/PDL, PWH/PWL, PMH/PML), the 12-month high/low on Monthly, or an unfilled FVG on the next timeframe up</span></label>
+    <label class="rl"><input type="checkbox" id="reqKey"> <span><b>Swept at a key level</b> – C2’s sweep reaches the previous day / week / month high or low (PDH/PDL, PWH/PWL, PMH/PML), the 12-month high/low on Monthly, an untouched swing high/low on the next timeframe up (drawn as “Sweep D/W/M” from the swing to C2), or an unfilled FVG on the next timeframe up</span></label>
     <label class="rl"><input type="checkbox" id="reqBias"> <span><b>HTF bias agrees</b> – the next timeframe up (1H/4H→Daily, Daily→Weekly, Weekly→Monthly) has the same TTrades bias</span></label>
     <div class="muted" style="font-weight:700;margin-top:8px">C2 – the sweep candle</div>
     <label class="rl"><input type="checkbox" id="reqSweep"> <span><b>Clean sweep</b> – goes at least 2 pips (or 5% of C1) beyond C1, and no more than C1’s whole range (a bigger move is an expansion, not a sweep)</span></label>
@@ -158,8 +158,8 @@
     <div class="muted" id="dNote"></div>
   </div>
 </div>
-<script src="live.js?v=10"></script>
-<script src="app.js?v=10"></script>
+<script src="live.js?v=11"></script>
+<script src="app.js?v=11"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>
