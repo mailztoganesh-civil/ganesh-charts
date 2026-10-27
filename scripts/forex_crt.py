@@ -169,12 +169,94 @@ def model1(lt, d, t0, lvl, t2, pip):
     return res
 
 
+PARENT = {"1H": "D", "4H": "D", "D": "W", "W": "M", "M": None}
+GRAND = {"1H": "W", "4H": "W", "D": "M", "W": None, "M": None}
+LVL_NAME = {"D": ("PDH", "PDL"), "W": ("PWH", "PWL"), "M": ("PMH", "PML")}
+
+
+def ttrades_bias(S, k):
+    """TTrades daily-bias rule applied to the parent candle k, from candles k-1 and k-2"""
+    if k < 2:
+        return 0
+    _, _, h1, l1, c1 = S[k - 1]; _, _, h2, l2, _ = S[k - 2]
+    if c1 > h2: return 1
+    if c1 < l2: return -1
+    if h1 > h2 and c1 < h2 and not l1 < l2: return -1
+    if l1 < l2 and c1 > l2 and not h1 > h2: return 1
+    return 0
+
+
+def c1_quality(lists, tf, r):
+    """Is C1 a proper C1?  size (>= 0.7 x average range of the 20 candles before it), not an inside bar,
+    swept at a key level (previous day/week/month high-low or an unfilled higher-timeframe FVG), and HTF bias."""
+    cs = lists[tf]; n = len(cs); st = r["status"]
+    c1i = n - 3 if st in ("formed", "done", "failed") else n - 2
+    if c1i < 1 or not r.get("dir"):
+        return None
+    d = r["dir"]; t, o, h, l, c = cs[c1i]; rng = h - l
+    prev = cs[max(0, c1i - 20):c1i]
+    avg = sum(x[2] - x[3] for x in prev) / len(prev) if prev else rng
+    size = rng >= 0.7 * avg
+    inside = h <= cs[c1i - 1][2] and l >= cs[c1i - 1][3]
+    c2 = cs[c1i + 1] if c1i + 1 < n else cs[-1]
+    ext = c2[3] if d == 1 else c2[2]
+    tol = 0.25 * rng
+    t2s = c2[0]
+    levels = []
+    for X in (PARENT[tf], GRAND[tf]):
+        if not X:
+            continue
+        S = lists[X]; k = max((i for i in range(len(S)) if S[i][0] <= t2s), default=None)
+        if k is not None and k >= 1:
+            levels.append((LVL_NAME[X][0], S[k - 1][2])); levels.append((LVL_NAME[X][1], S[k - 1][3]))
+    if tf == "M":
+        past = cs[max(0, c1i - 12):c1i]
+        if past:
+            levels += [("12M high", max(x[2] for x in past)), ("12M low", min(x[3] for x in past))]
+    key = None
+    for name, L in levels:
+        if d == 1 and name.endswith(("L", "low")) and ext - tol <= L <= l + tol:
+            key = (name, L); break
+        if d == -1 and name.endswith(("H", "high")) and h - tol <= L <= ext + tol:
+            key = (name, L); break
+    P = PARENT[tf]; bias = None
+    if P:
+        S = lists[P]; k = max((i for i in range(len(S)) if S[i][0] <= t2s), default=None)
+        if key is None and k is not None:      # unfilled FVG on the parent timeframe
+            for j in range(k - 1, max(1, k - 30), -1):
+                a2, cj = S[j - 2], S[j]
+                if d == 1 and cj[3] > a2[2]:
+                    bot, top = a2[2], cj[3]
+                    if all(x[3] > bot for x in S[j + 1:k]) and bot - tol <= ext <= top + tol:
+                        key = (P + " FVG", top); break
+                if d == -1 and cj[2] < a2[3]:
+                    bot, top = cj[2], a2[3]
+                    if all(x[2] < top for x in S[j + 1:k]) and bot - tol <= ext <= top + tol:
+                        key = (P + " FVG", bot); break
+        if k is not None:
+            b = ttrades_bias(S, k)
+            bias = None if b == 0 else (b == d)
+    req = size and not inside
+    grade = "A" if req and key and bias is not False else "B" if req and (key or bias) else "C"
+    return dict(size=bool(size), inside=bool(inside), key=key[0] if key else None, keyLvl=key[1] if key else None,
+                bias=bias, grade=grade, c1t=t)
+
+
 def add_model1(row, tfs, ltf_lists):
     """attach Model-1 (on the paired lower timeframe) to every CRT that has a sweep"""
     lists = {k: [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in df.iterrows()]
              for k, df in tfs.items() if k in ("D", "4H", "1H")}
+    lists.update({k: [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in df.iterrows()]
+                  for k, df in tfs.items() if k in ("W", "M")})
     lists.update(ltf_lists)
     dg = 2 if row["pip"] >= 0.1 else 3 if row["pip"] >= 0.01 else 5
+    for tf, r in row["tf"].items():           # is C1 a proper C1?
+        if r.get("status") not in (None, "none"):
+            q = c1_quality(lists, tf, r)
+            if q:
+                if isinstance(q.get("keyLvl"), float):
+                    q["keyLvl"] = round(q["keyLvl"], dg + 1)
+                r["q"] = q
     for tf, r in row["tf"].items():
         st = r.get("status")
         if st not in ("formed", "forming", "sweeping", "done") or LTF_FOR.get(tf) not in lists:

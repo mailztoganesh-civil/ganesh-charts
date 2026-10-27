@@ -125,9 +125,67 @@ function model1(lt, d, t0, lvl, t2, pip) {
   } else res.need = round(Math.abs(lt[lt.length - 1][4] - level) / pip, 1);
   return res;
 }
+/* Is C1 a proper C1? size (>= 0.7 x average range of the 20 candles before it), not an inside bar, swept at a
+ * key level (previous day/week/month high-low or an unfilled higher-timeframe FVG), and the HTF bias. */
+const PARENT = { "1H": "D", "4H": "D", D: "W", W: "M", M: null }, GRAND = { "1H": "W", "4H": "W", D: "M", W: null, M: null };
+const LVL_NAME = { D: ["PDH", "PDL"], W: ["PWH", "PWL"], M: ["PMH", "PML"] };
+function ttBias(S, k) {
+  if (k < 2) return 0;
+  const [, , h1, l1, c1] = S[k - 1], [, , h2, l2] = S[k - 2];
+  if (c1 > h2) return 1; if (c1 < l2) return -1;
+  if (h1 > h2 && c1 < h2 && !(l1 < l2)) return -1;
+  if (l1 < l2 && c1 > l2 && !(h1 > h2)) return 1;
+  return 0;
+}
+const lastAtOrBefore = (S, t) => { let k = -1; for (let i = 0; i < S.length; i++) if (S[i][0] <= t) k = i; return k < 0 ? null : k; };
+function c1Quality(lists, tf, r) {
+  const cs = lists[tf], n = cs.length, st = r.status;
+  const c1i = ["formed", "done", "failed"].includes(st) ? n - 3 : n - 2;
+  if (c1i < 1 || !r.dir) return null;
+  const d = r.dir, [t, , h, l] = cs[c1i], rng = h - l;
+  const prev = cs.slice(Math.max(0, c1i - 20), c1i);
+  const avg = prev.length ? prev.reduce((a, x) => a + x[2] - x[3], 0) / prev.length : rng;
+  const size = rng >= 0.7 * avg, inside = h <= cs[c1i - 1][2] && l >= cs[c1i - 1][3];
+  const c2 = c1i + 1 < n ? cs[c1i + 1] : cs[n - 1];
+  const ext = d === 1 ? c2[3] : c2[2], tol = 0.25 * rng, t2s = c2[0];
+  const levels = [];
+  for (const X of [PARENT[tf], GRAND[tf]]) {
+    if (!X) continue;
+    const S = lists[X], k = lastAtOrBefore(S, t2s);
+    if (k !== null && k >= 1) levels.push([LVL_NAME[X][0], S[k - 1][2]], [LVL_NAME[X][1], S[k - 1][3]]);
+  }
+  if (tf === "M") { const past = cs.slice(Math.max(0, c1i - 12), c1i); if (past.length) levels.push(["12M high", Math.max(...past.map(x => x[2]))], ["12M low", Math.min(...past.map(x => x[3]))]); }
+  let key = null;
+  for (const [name, L] of levels) {
+    if (d === 1 && (name.endsWith("L") || name.endsWith("low")) && ext - tol <= L && L <= l + tol) { key = [name, L]; break; }
+    if (d === -1 && (name.endsWith("H") || name.endsWith("high")) && h - tol <= L && L <= ext + tol) { key = [name, L]; break; }
+  }
+  const P = PARENT[tf]; let bias = null;
+  if (P) {
+    const S = lists[P], k = lastAtOrBefore(S, t2s);
+    if (!key && k !== null) {
+      for (let j = k - 1; j > Math.max(1, k - 30); j--) {
+        const a2 = S[j - 2], cj = S[j];
+        if (d === 1 && cj[3] > a2[2]) { const bot = a2[2], top = cj[3];
+          if (S.slice(j + 1, k).every(x => x[3] > bot) && bot - tol <= ext && ext <= top + tol) { key = [P + " FVG", top]; break; } }
+        if (d === -1 && cj[2] < a2[3]) { const bot = cj[2], top = a2[3];
+          if (S.slice(j + 1, k).every(x => x[2] < top) && bot - tol <= ext && ext <= top + tol) { key = [P + " FVG", bot]; break; } }
+      }
+    }
+    if (k !== null) { const b = ttBias(S, k); bias = b === 0 ? null : b === d; }
+  }
+  const req = size && !inside;
+  const grade = req && key && bias !== false ? "A" : req && (key || bias) ? "B" : "C";
+  return { size, inside, key: key ? key[0] : null, keyLvl: key ? key[1] : null, bias, grade, c1t: t };
+}
 function addModel1(row, tfs, ltfFull) {
-  const lists = { D: tfs.D, "4H": tfs["4H"], "1H": tfs["1H"], ...ltfFull };
+  const lists = { M: tfs.M, W: tfs.W, D: tfs.D, "4H": tfs["4H"], "1H": tfs["1H"], ...ltfFull };
   const dg = row.pip >= 0.1 ? 2 : row.pip >= 0.01 ? 3 : 5;
+  for (const [tf, r] of Object.entries(row.tf)) {
+    if (!r.status || r.status === "none") continue;
+    const q = c1Quality(lists, tf, r);
+    if (q) { if (typeof q.keyLvl === "number") q.keyLvl = round(q.keyLvl, dg + 1); r.q = q; }
+  }
   for (const [tf, r] of Object.entries(row.tf)) {
     if (!["formed", "forming", "sweeping", "done"].includes(r.status) || !lists[LTF_FOR[tf]]) continue;
     const cs = r.candles;
@@ -171,5 +229,5 @@ async function load(base) {
   if (!pairs.length) throw new Error("live data unavailable");
   return { updated: new Date().toISOString(), near: NEAR, pairs, live: true, missing: rows.length - pairs.length };
 }
-window.FXLive = { load, build, classify, model1, addModel1, PAIRS };
+window.FXLive = { load, build, classify, model1, addModel1, c1Quality, PAIRS };
 })();

@@ -39,11 +39,11 @@
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--sec); margin:2px 2px 8px; font-weight:700; }
   /* matrix */
   .mx { width:100%; border-collapse:separate; border-spacing:0 4px; font-size:13px; }
-  .mx th { color:var(--sec); font-weight:700; font-size:12px; text-align:center; padding:0 2px; }
+  .mx th { color:var(--sec); font-weight:700; font-size:11px; text-align:center; padding:0 1px; }
   .mx th:first-child, .mx td:first-child { text-align:left; }
-  .mx td { text-align:center; padding:0 2px; }
+  .mx td { text-align:center; padding:0 1px; }
   .mx td:first-child { font-weight:700; }
-  .dot { display:inline-block; min-width:52px; padding:4px 6px; border-radius:8px; font-size:12px; font-weight:700; border:0; background:var(--nsoft); color:var(--sec); }
+  .dot { display:inline-block; min-width:44px; padding:3px 5px; border-radius:8px; font-size:11px; white-space:nowrap; line-height:1.25; font-weight:700; border:0; background:var(--nsoft); color:var(--sec); }
   .s-formed.up { background:var(--green); color:#fff; } .s-formed.dn { background:var(--red); color:#fff; }
   .s-forming.up { background:var(--gsoft); color:var(--green); } .s-forming.dn { background:var(--rsoft); color:var(--red); }
   .s-sweeping { background:var(--asoft); color:var(--amber); }
@@ -61,6 +61,13 @@
   .m1 { display:block; font-size:13px; padding:7px 9px; border-radius:9px; margin-top:2px; }
   .m1.ok { background:var(--gsoft); color:var(--ink); } .m1.wait { background:var(--asoft); color:var(--ink); } .m1.done { background:var(--nsoft); color:var(--sec); }
   .dot small { font-size:10px; font-weight:800; opacity:.9; }
+  .dot.weak { opacity:.35; }
+  .q { display:flex; flex-wrap:wrap; gap:4px 10px; font-size:12px; align-items:center; }
+  .q .ok { color:var(--green); font-weight:600; } .q .no { color:var(--sec); text-decoration:line-through; } .q .na { color:var(--sec); }
+  .g { display:inline-grid; place-items:center; width:20px; height:20px; border-radius:6px; font-size:12px; color:#fff; }
+  .gA { background:var(--green); } .gB { background:var(--amber); } .gC { background:var(--sec); }
+  .rl { display:flex; gap:8px; align-items:flex-start; font-size:13px; color:var(--ink2); padding:6px 0; }
+  .rl input { margin-top:3px; }
   .empty { color:var(--sec); text-align:center; padding:18px 8px; }
   /* detail */
   .sheet { position:fixed; inset:0; background:rgba(10,6,20,.5); z-index:20; display:flex; align-items:flex-end; justify-content:center; }
@@ -96,10 +103,20 @@
   <div class="chips" id="dirChips" aria-label="Direction filter">
     <button class="chip on" data-dir="0">Both</button><button class="chip" data-dir="1">▲ Bullish</button><button class="chip" data-dir="-1">▼ Bearish</button>
   </div>
+  <div class="muted" id="weakNote"></div>
   <section id="list" style="display:grid;gap:8px"></section>
   <section class="card">
     <h2>All timeframes</h2>
+    <div class="muted" style="margin:-4px 2px 8px">C3 = formed (C2 closed, now in C3) · C2 = forming · Swp = sweeping · Near = anticipated · A/B/C = C1 grade · faded = C1 fails your rules</div>
     <div style="overflow-x:auto"><table class="mx" id="mx"></table></div>
+  </section>
+  <section class="card">
+    <h2>C1 rules</h2>
+    <div class="muted" style="margin-bottom:6px">A candle only counts as C1 when it passes the rules you tick. Others are hidden (tap “Show” above the list to see them).</div>
+    <label class="rl"><input type="checkbox" id="reqC1"> <span><b>Proper C1</b> – range at least 0.7× the average of the 20 candles before it, and not an inside bar</span></label>
+    <label class="rl"><input type="checkbox" id="reqKey"> <span><b>Swept at a key level</b> – C2’s sweep reaches the previous day / week / month high or low (PDH/PDL, PWH/PWL, PMH/PML), the 12-month high/low on Monthly, or an unfilled FVG on the next timeframe up</span></label>
+    <label class="rl"><input type="checkbox" id="reqBias"> <span><b>HTF bias agrees</b> – the next timeframe up (1H/4H→Daily, Daily→Weekly, Weekly→Monthly) has the same TTrades bias</span></label>
+    <div class="muted" style="margin-top:6px">Grade <b>A</b> = proper C1 + key level + bias not against · <b>B</b> = proper C1 + key level or bias · <b>C</b> = the rest.</div>
   </section>
   <section class="card">
     <h2>Live prices</h2>
@@ -111,6 +128,7 @@
     <b>Formed</b> – the last closed candle (C2) swept the previous candle's high/low and closed back inside. The current candle is C3, heading for the other side of C1.<br>
     <b>Forming</b> – the current candle has swept the previous high/low and is back inside now. Becomes Formed if it closes there.<br>
     <b>Sweeping</b> – the current candle is beyond the previous high/low, not back inside yet.<br>
+    <b>C1</b> – the candle whose range is swept. It must be a proper candle (not tiny, not an inside bar) and its sweep should happen at a key level; see C1 rules.<br>
     <b>Model-1</b> – on the lower timeframe (Monthly→Daily, Weekly→4H, Daily→1H, 4H→15m, 1H→5m): after the sweep, the opening price of the last opposite candle (or candle series) before the sweep extreme. A close back through it is the entry; stop beyond the sweep, target the other side of the CRT range. When that candle is mostly wick, its high/low is used instead.<br>
     <b>Anticipated</b> – no sweep yet, price is within <span id="nearTxt">25%</span> of the previous candle's high/low.<br>
     Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Live prices refresh every minute through your Cloudflare Worker; the GitHub scan is the backup. Gold uses COMEX gold futures.
@@ -130,8 +148,8 @@
     <div class="muted" id="dNote"></div>
   </div>
 </div>
-<script src="live.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="live.js?v=5"></script>
+<script src="app.js?v=5"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

@@ -6,6 +6,7 @@
 "use strict";
 const TFS = ["1H", "4H", "D", "W", "M"];
 const TF_NAME = { "1H": "1H", "4H": "4H", D: "Daily", W: "Weekly", M: "Monthly" };
+const TF_SHORT = { "1H": "1H", "4H": "4H", D: "D", W: "W", M: "M" };
 const M1_TF = { M: "Daily", W: "4H", D: "1H", "4H": "15m", "1H": "5m" };
 const ORDER = { formed: 0, forming: 1, sweeping: 2, anticipated: 3, done: 4, failed: 5, none: 6 };
 const SETUP = ["formed", "forming", "sweeping", "anticipated"];
@@ -13,7 +14,7 @@ const $ = s => document.querySelector(s);
 const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
              set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 
-let view = ls.get("fx-view", "single"), data = null, tf = ls.get("fx-tf", "4H"), st = ls.get("fx-st", "all"), dir = 0, detail = null;
+let req = ls.get("fx-req", { c1: true, key: true, bias: false }), showWeak = false, view = ls.get("fx-view", "single"), data = null, tf = ls.get("fx-tf", "4H"), st = ls.get("fx-st", "all"), dir = 0, detail = null;
 
 /* ---------- formatting ---------- */
 const digits = p => p.pip >= 0.1 ? 2 : p.pip >= 0.01 ? 3 : 5;
@@ -34,9 +35,9 @@ function endOf(r, t) {
 function label(r, short) {
   const up = r.dir === 1, a = up ? "▲" : "▼";
   switch (r.status) {
-    case "formed": return `${a} Formed`;
-    case "forming": return short ? `${a} Forming` : `${a} C2 forming`;
-    case "sweeping": return short ? `${a} Sweep` : up ? "▲ Sweeping low" : "▼ Sweeping high";
+    case "formed": return short ? `${a} C3` : `${a} Formed`;
+    case "forming": return short ? `${a} C2` : `${a} C2 forming`;
+    case "sweeping": return short ? `${a} Swp` : up ? "▲ Sweeping low" : "▼ Sweeping high";
     case "anticipated": return short ? `${a} Near` : up ? "▲ Near low" : "▼ Near high";
     case "done": return short ? "hit" : "✓ Target hit";
     case "failed": return short ? "fail" : "✕ Failed";
@@ -95,21 +96,31 @@ function render() {
   const chips = [["all", "All setups"], ["m1", "Model-1 ✓"], ["m1p", "Model-1 pending"], ["formed", "Formed"], ["forming", "Forming"], ["sweeping", "Sweeping"], ["anticipated", "Anticipated"]];
   $("#stChips").innerHTML = chips.map(([k, n]) => `<button class="chip${st === k ? " on" : ""}" data-st="${k}">${n}<b>${count(k)}</b></button>`).join("");
   // list
+  const hidden = rows.filter(x => match(x.r, st, true)).length - rows.filter(x => match(x.r, st)).length;
+  $("#weakNote").innerHTML = hidden > 0 ? `${hidden} setup${hidden > 1 ? "s" : ""} hidden – C1 doesn't meet your rules. <button class="chip" id="showWeak" type="button">Show</button>` :
+    showWeak ? `Showing all setups, including weak C1s. <button class="chip" id="showWeak" type="button">Hide weak</button>` : "";
   const show = rows.filter(x => match(x.r, st))
     .sort((a, b) => m1rank(a.r) - m1rank(b.r) || ORDER[a.r.status] - ORDER[b.r.status] || a.p.sym.localeCompare(b.p.sym));
   $("#list").innerHTML = show.length ? show.map(x => card(x.p, x.r)).join("")
     : `<div class="card empty">No ${st === "all" ? "" : st === "m1" ? "confirmed Model-1 " : st === "m1p" ? "pending Model-1 " : st + " "}setups on ${TF_NAME[tf]} right now.</div>`;
   // matrix
-  $("#mx").innerHTML = `<thead><tr><th>Pair</th>${TFS.map(t => `<th>${TF_NAME[t]}</th>`).join("")}</tr></thead><tbody>` +
+  $("#mx").innerHTML = `<thead><tr><th>Pair</th>${TFS.map(t => `<th>${TF_SHORT[t]}</th>`).join("")}</tr></thead><tbody>` +
     data.pairs.map(p => `<tr><td>${esc(p.sym)}</td>${TFS.map(t => {
       const r = p.tf[t]; if (!r) return "<td></td>";
       const m = r.m1 && !r.m1.hit ? (r.m1.confirmed ? "<br><small>M1 ✓</small>" : "<br><small>M1 …</small>") : "";
-      return `<td><button class="dot ${cls(r)}" data-sym="${esc(p.sym)}" data-tf="${t}">${label(r, true)}${m}</button></td>`;
+      const g = r.q && SETUP.includes(r.status) ? ` <small>${r.q.grade}</small>` : "";
+      return `<td><button class="dot ${cls(r)}${SETUP.includes(r.status) && !passes(r) ? " weak" : ""}" data-sym="${esc(p.sym)}" data-tf="${t}">${label(r, true)}${g}${m}</button></td>`;
     }).join("")}</tr>`).join("") + "</tbody>";
   if (detail) drawDetail();
 }
-function match(r, s) {
+function passes(r) {            // C1 rules chosen in settings
+  const q = r.q;
+  if (!q) return !(req.c1 || req.key || req.bias);
+  return (!req.c1 || (q.size && !q.inside)) && (!req.key || !!q.key) && (!req.bias || q.bias === true);
+}
+function match(r, s, ignoreRules) {
   if (dir !== 0 && r.dir !== dir) return false;
+  if (!ignoreRules && !showWeak && SETUP.includes(r.status) && !passes(r)) return false;
   if (s === "all") return SETUP.includes(r.status);
   if (s === "m1") return !!(r.m1 && r.m1.confirmed && !r.m1.hit);
   if (s === "m1p") return !!(r.m1 && !r.m1.confirmed);
@@ -123,6 +134,11 @@ function m1line(p, r, t) {
   if (m.confirmed && m.hit) return `<span class="m1 done">Model-1 (${tfn}) reached target</span>`;
   if (m.confirmed) return `<span class="m1 ok">${a} Model-1 ✓ on ${tfn} · ${ago2(m.tConf)} · entry <b>${fmt(p, m.entry)}</b> · SL <b>${fmt(p, m.ext)}</b> · TP <b>${fmt(p, m.target)}</b>${m.rr != null ? ` · R:R <b>${m.rr}</b>` : ""}</span>`;
   return `<span class="m1 wait">Model-1 pending on ${tfn}: needs a close ${m.dir === 1 ? "above" : "below"} <b>${fmt(p, m.level)}</b> (${m.need} pips)</span>`;
+}
+function qline(r) {
+  const q = r.q; if (!q) return "";
+  const ck = (ok, txt) => `<span class="${ok === true ? "ok" : ok === false ? "no" : "na"}">${ok === true ? "✓" : ok === false ? "✗" : "–"} ${txt}</span>`;
+  return `<div class="q"><b class="g g${q.grade}">${q.grade}</b>${ck(q.size, "C1 size")}${ck(!q.inside, "not inside bar")}${ck(!!q.key, q.key ? "at " + q.key : "key level")}${ck(q.bias, "HTF bias")}</div>`;
 }
 function card(p, r) {
   const d = [];
@@ -148,7 +164,7 @@ function card(p, r) {
   }
   return `<button class="row" data-sym="${esc(p.sym)}" data-tf="${tf}" style="text-align:left;font:inherit;color:inherit">
     <div class="top"><span class="pair">${esc(p.sym)}</span><span class="badge ${cls(r)}">${label(r)}</span><span class="px">${fmt(p, r.price)}</span></div>
-    <div class="det">${d.map(x => `<span>${x}</span>`).join("")}</div>${m1line(p, r, tf)}</button>`;
+    <div class="det">${d.map(x => `<span>${x}</span>`).join("")}</div>${qline(r)}${m1line(p, r, tf)}</button>`;
 }
 
 /* ---------- detail sheet + chart ---------- */
@@ -176,6 +192,7 @@ function drawDetail() {
   if (r.t2 != null) L.push(["Pips to T2", pips(p, r.price, r.t2).toFixed(1)]);
   if (r.rr != null) L.push(["R:R from here", r.rr]);
   L.push(["Candle closes in", left(endOf(r, detail.tf))]);
+  if (r.q) L.push(["C1 grade", r.q.grade + (r.q.key ? " · " + r.q.key : "")]);
   if (r.m1) {
     const m = r.m1;
     L.push([`Model-1 (${M1_TF[detail.tf]})`, m.confirmed ? (m.hit ? "✓ hit target" : "✓ confirmed") : "pending"], ["Model-1 level", fmt(p, m.level) + (m.wick ? " (wick)" : "")]);
@@ -226,7 +243,7 @@ function draw(cv, p, r, cs, o) {
   if (o.empty) { g.fillStyle = C.sec; g.font = "13px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillText(o.empty, 10, H / 2); return; }
   const last = cs.length - 1;
   const padR = 64, padB = 22, padT = 18, plotW = W - padR - 6, plotH = H - padB - padT;
-  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext].filter(v => v != null);
+  const lv = [r.t1, r.t2, r.inv, r.level, r.c1h, r.c1l, o.m1 && o.m1.level, o.m1 && o.m1.ext, r.q && r.q.keyLvl].filter(v => v != null);
   let hi = Math.max(...cs.map(c => c[2]), ...lv), lo = Math.min(...cs.map(c => c[3]), ...lv);
   const padY = (hi - lo) * 0.06 || hi * 0.001; hi += padY; lo -= padY;
   const step = plotW / (cs.length + 4), bw = Math.max(1.5, step * 0.62);
@@ -254,6 +271,7 @@ function draw(cv, p, r, cs, o) {
     hline(r.c1l, r.dir === 1 ? C.amber : C.blue, r.dir === 1 ? "CRT Low" : "TP CRT L");
     hline((r.c1h + r.c1l) / 2, C.sec, "50%", true);
   }
+  if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key.replace(" FVG", "FVG"), true);
   const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" ? r.inv : r.sweep;
   if (sweepPx != null && !o.m1) hline(sweepPx, C.dn, "Sweep", true);
   // Model-1 marks (lower-timeframe chart)
@@ -317,6 +335,9 @@ $("#dView").addEventListener("click", e => { const b = e.target.closest("button"
 document.querySelectorAll("#dView button").forEach(x => x.classList.toggle("on", x.dataset.v === view));
 $("#sheet").addEventListener("click", e => { if (e.target.id === "sheet") closeDetail(); });
 $("#refresh").onclick = () => load(true);
+document.addEventListener("click", e => { if (e.target.id === "showWeak") { showWeak = !showWeak; render(); } });
+["reqC1", "reqKey", "reqBias"].forEach(id => { const el = $("#" + id); el.checked = req[{ reqC1: "c1", reqKey: "key", reqBias: "bias" }[id]];
+  el.onchange = () => { req = { c1: $("#reqC1").checked, key: $("#reqKey").checked, bias: $("#reqBias").checked }; ls.set("fx-req", req); render(); }; });
 addEventListener("resize", () => { if (detail) drawDetail(); });
 try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { if (detail) drawDetail(); }); } catch (e) {}
 document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
