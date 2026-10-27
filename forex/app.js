@@ -183,7 +183,7 @@ function card(p, r) {
     d.push(r.status === "done" ? `Reached target ${fmt(p, r.t2)}` : `Went beyond the sweep ${fmt(p, r.inv)}`);
   }
   const ins = insideCount(r);
-  if (ins > 0) d.push(`<span class="muted">C1 is ${ins + (r.status === "anticipated" ? 1 : 1)} candles back (${ins} inside bar${ins > 1 ? "s" : ""} after it)</span>`);
+  if (ins > 0) d.push(`<span class="muted">C1 is ${ins + (r.status === "anticipated" ? 1 : 1)} candles back (${ins} candle${ins > 1 ? "s" : ""} inside its range)</span>`);
   return `<button class="row" data-sym="${esc(p.sym)}" data-tf="${tf}" style="text-align:left;font:inherit;color:inherit">
     <div class="top"><span class="pair">${esc(p.sym)}</span><span class="badge ${cls(r)}">${label(r)}</span><span class="px">${fmt(p, r.price)}</span></div>
     <div class="det">${d.map(x => `<span>${x}</span>`).join("")}</div>${qline(r)}${m1line(p, r, tf)}</button>`;

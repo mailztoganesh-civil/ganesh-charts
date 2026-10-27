@@ -57,16 +57,19 @@ TF_HOURS = {"1H": 1, "4H": 4, "D": 24, "W": 120, "M": 0}
 LTF_FOR = {"M": "D", "W": "4H", "D": "1H", "4H": "15m", "1H": "5m"}   # Model-1 is looked for on this timeframe
 
 
-LOOK = 8   # how far back C1 (the range candle) can be when inside bars follow it
+LOOK = 10   # how far back C1 (the range candle) can be
 
 
 def mother(cs, i):
-    """C1 = the range candle: start at candle i and walk back while the candle sits inside the one before it
-    (inside bars), so C1 is the candle whose high and low are still untouched."""
-    m = i
-    while m - 1 >= 0 and i - (m - 1) <= LOOK and cs[m][2] <= cs[m - 1][2] and cs[m][3] >= cs[m - 1][3]:
-        m -= 1
-    return m
+    """C1 = the range candle: the furthest-back candle (up to LOOK) whose high-low range contains every candle
+    after it up to candle i. Candles inside that range (not only strict inside bars) keep C1 alive; C2 is then
+    the first candle to trade outside it."""
+    best = i; hi = cs[i][2]; lo = cs[i][3]
+    for k in range(i - 1, max(-1, i - LOOK - 1), -1):
+        if cs[k][2] >= hi and cs[k][3] <= lo:
+            best = k
+        hi = max(hi, cs[k][2]); lo = min(lo, cs[k][3])
+    return best
 
 
 def classify(df, tf, pip):

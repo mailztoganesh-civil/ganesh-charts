@@ -55,12 +55,16 @@ function build(bars) {
 
 function round(v, dg) { const f = Math.pow(10, dg); return Math.round(v * f) / f; }
 
-const LOOK = 8;   // how far back C1 (the range candle) can be when inside bars follow it
-/* C1 = the range candle: start at candle i and walk back while the candle sits inside the one before it */
+const LOOK = 10;   // how far back C1 (the range candle) can be
+/* C1 = the range candle: the furthest-back candle (up to LOOK) whose high-low range contains every candle after it
+ * up to candle i. Candles inside that range keep C1 alive; C2 is the first candle to trade outside it. */
 function mother(cs, i) {
-  let m = i;
-  while (m - 1 >= 0 && i - (m - 1) <= LOOK && cs[m][2] <= cs[m - 1][2] && cs[m][3] >= cs[m - 1][3]) m--;
-  return m;
+  let best = i, hi = cs[i][2], lo = cs[i][3];
+  for (let k = i - 1; k >= Math.max(0, i - LOOK); k--) {
+    if (cs[k][2] >= hi && cs[k][3] <= lo) best = k;
+    hi = Math.max(hi, cs[k][2]); lo = Math.min(lo, cs[k][3]);
+  }
+  return best;
 }
 function classify(cs, tf, pip) {
   const n = cs.length;

@@ -1,5 +1,5 @@
 /* Forex CRT service worker: app files network-first (updates arrive), cached for offline. */
-const CACHE = "forex-crt-v7";
+const CACHE = "forex-crt-v8";
 const APP = ["./", "./index.html", "./app.js", "./live.js", "./manifest.json", "./icon-180.png", "./icon-192.png", "./icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(APP)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
