@@ -219,6 +219,7 @@
       <b>6. Displacement</b> – the biggest 15m body from the extreme to the CHoCH, in 15m ATR(14).<br>
       <b>7. Entry zone</b> – the 15m FVG in that move (made by the biggest candle, at least 0.1 × ATR), else the order block (last opposite candle before the extreme). Entry = near edge of the zone, stop = sweep extreme, target = step 4.<br>
       <b>8. Status</b> – Sweeping → Sweep only → CHoCH → Entry ready → In trade → Target hit / Stopped. Before entry: Invalidated (beyond the stop), Missed (target first) or Expired (6 4H candles after the sweep).<br>
+      <b>Chart marks</b> – <i>pending limit</i>: dashed line with a hollow diamond, drawn from the moment the order is active (the close of the 15m candle after the CHoCH, never before the 4H sweep candle closed) – it is not a trade yet. <i>Simulated entry</i>: solid arrow (▲ BUY / ▼ SELL) on the first later candle whose range touches the limit, solid line from there. <i>Stop</i>: red ✕ at the stop price. <i>Target</i>: blue ✓ at the target price. * = stop and fill/target inside one candle; the order inside a candle is unknown, so it is counted as a stop (fill + target in one candle is not counted). Grey dashed line = order cancelled (invalidated, missed or expired).<br>
       <b>TTrades checklist</b> (his “ICT Entry Checklist” video) – stop raid (the 4H sweep), structure shift (the 15m CHoCH), discount / premium (the entry is below the 50% of the move from the sweep extreme for longs, above it for shorts), PD array (the FVG or order block) and solid R:R (≥ 2). Shown as n/5.<br>
       <b>★ A1</b> – the best setups: grade A and TTrades checklist 5/5 (shown with an A1 badge; the “★ A1 best” chip lists only these).<br>
       <b>Grade</b> – one point each: swing ≥ 1.5 ATR, sweep 0.1–1.0 ATR, displacement ≥ 1.5 ATR, FVG zone, R:R ≥ 2. A = 4–5, B = 3, C = 0–2. Filters only hide setups; they never change what was detected.
@@ -252,11 +253,11 @@
     <div class="muted" id="swWhy"></div>
   </div>
 </div>
-<script src="sweep.js?v=20"></script>
-<script src="live.js?v=20"></script>
-<script src="app.js?v=20"></script>
-<script src="sweep-ui.js?v=20"></script>
-<script src="export.js?v=20"></script>
+<script src="sweep.js?v=21"></script>
+<script src="live.js?v=21"></script>
+<script src="app.js?v=21"></script>
+<script src="sweep-ui.js?v=21"></script>
+<script src="export.js?v=21"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

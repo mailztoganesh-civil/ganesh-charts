@@ -168,30 +168,48 @@ def ltf_setup(sw, c4, m15, open_last=True, sec=H4):
     out["rr"] = (abs(tp - entry) / abs(sl - entry)
                  if tp is not None and (tp - entry) * d > 0 and abs(sl - entry) > 0 else None)
     out["status"] = "ENTRY_READY"
-    tconf = c4[j + 1][0] if j + 1 < len(c4) else t4 + sec      # no fill before the 4H sweep candle has closed
+    # the limit order becomes ACTIVE only when the zone is known (candle b+1 closed) and the sweep candle has closed
+    tconf = c4[j + 1][0] if j + 1 < len(c4) else t4 + sec
+    tzone = m15[b + 1][0] + step
+    order = out["order"] = {"dir": d, "side": "BUY" if d == 1 else "SELL", "kind": "limit", "price": entry, "zoneType": best["type"],
+                            "activeT": max(tzone, tconf), "state": "PENDING"}
+    if order["activeT"] > m15[n - 1][0]:
+        order["state"] = "WAITING"                       # not active yet (higher-timeframe candle still open)
     filled = False
-    for k in range(max(best["from"], b) + 1, n):       # zone usable only after the CHoCH closed
+    for k in range(b + 2, n):                            # from the first candle after the zone became known
         t = m15[k][0]; hk = H(k); lk = L(k)
         if not filled:
             if t >= texp:
-                out["status"] = "EXPIRED"; break
+                out["status"] = "EXPIRED"; order["state"] = "CANCELLED"; order["why"] = "expired: no fill within 6 candles of the sweep"; break
+            active = t >= order["activeT"]
             touch = (hk >= entry) if d == -1 else (lk <= entry)
             stop = (hk > sl) if d == -1 else (lk < sl)
-            fillable = touch and t >= tconf
+            fillable = touch and active
             hit_t = tp is not None and ((lk <= tp) if d == -1 else (hk >= tp))
             if hit_t and not (fillable and stop):          # target first, or same candle as the fill: not a trade
-                out["status"] = "MISSED"; out["tExit"] = t; break
+                out["status"] = "MISSED"; out["tExit"] = t; order["state"] = "CANCELLED"
+                order["why"] = ("entry and target inside the same candle - order of events unknown, not counted" if fillable
+                                else "target reached before the entry")
+                break
             if stop and not fillable:
-                out["status"] = "INVALIDATED"; out["tExit"] = t; break
+                out["status"] = "INVALIDATED"; out["tExit"] = t; order["state"] = "CANCELLED"
+                order["why"] = ("price went beyond the stop without a fill" if active
+                                else "price went beyond the stop before the order was active")
+                break
             if fillable:
-                filled = True; out["status"] = "ENTERED"; out["tFill"] = t
+                filled = True; out["status"] = "ENTERED"; out["tFill"] = t; out["fillPx"] = entry; order["state"] = "FILLED"
         if filled:
             stop = (hk >= sl) if d == -1 else (lk <= sl)
             hit = tp is not None and ((lk <= tp) if d == -1 else (hk >= tp))
             if stop:
-                out["status"] = "STOPPED"; out["tExit"] = t; break
+                out["status"] = "STOPPED"; out["tExit"] = t; out["exitPx"] = sl
+                if hit:
+                    out["exitNote"] = "stop and target both inside this candle - order unknown, counted as a stop"
+                elif t == out["tFill"]:
+                    out["exitNote"] = "filled and stopped inside the same candle - order unknown, counted as a stop"
+                break
             if hit:
-                out["status"] = "TARGET_HIT"; out["tExit"] = t; break
+                out["status"] = "TARGET_HIT"; out["tExit"] = t; out["exitPx"] = tp; break
     return out
 
 

@@ -111,7 +111,7 @@ class Sweep4H(unittest.TestCase):
             elif isinstance(v, (int, float)) and not isinstance(v, bool):
                 self.assertAlmostEqual(got[k], v, places=9, msg=where + "." + k)
             else:
-                self.assertEqual(got[k], v, where + "." + k)
+                self.assertEqual(got.get(k), v, where + "." + k)   # a missing field counts as None
 
     def test_hand_cases(self):
         import sweep4h as S
@@ -156,6 +156,7 @@ class NoRepaint(unittest.TestCase):
                             self.assertEqual(r["tFill"], seen[k]["fill"], f"{key} {k} fill time changed"); checked += 1
                         seen.setdefault(k, {})["fill"] = r["tFill"]
                         self.assertGreaterEqual(r["tFill"], r["sweep"]["t"] + sec, f"{key} {k} filled before the sweep candle closed")
+                        self.assertGreaterEqual(r["tFill"], r["order"]["activeT"], f"{key} {k} filled before the order was active")
                     if r["status"] in ("TARGET_HIT", "STOPPED", "INVALIDATED", "MISSED", "EXPIRED"):
                         if k in seen and "end" in seen[k]:
                             self.assertEqual(r["status"], seen[k]["end"], f"{key} {k} final result changed"); checked += 1

@@ -8,6 +8,7 @@ const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v === n
              set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} } };
 const STATUS = { SWEEPING: "Sweeping", SWEEP: "Sweep only", NO_LTF: "Sweep only", CHOCH: "CHoCH formed", ENTRY_READY: "Entry ready",
   ENTERED: "In trade", TARGET_HIT: "Target hit", STOPPED: "Stopped", INVALIDATED: "Invalidated", MISSED: "Missed", EXPIRED: "Expired" };
+const ORDST = { WAITING: "Waiting – active after the next candle closes", PENDING: "Pending (not filled)", FILLED: "Filled (simulated)", CANCELLED: "Cancelled" };
 const ACTIVE = ["SWEEPING", "SWEEP", "NO_LTF", "CHOCH", "ENTRY_READY", "ENTERED"];
 const ORDER = { ENTRY_READY: 0, ENTERED: 1, CHOCH: 2, SWEEP: 3, NO_LTF: 3, SWEEPING: 4, TARGET_HIT: 5, STOPPED: 6, INVALIDATED: 7, MISSED: 8, EXPIRED: 9 };
 const CHIPS = [["a1", "★ A1 best"], ["active", "Active"], ["SWEEPING", "Sweeping"], ["sweep", "Sweep only"], ["CHOCH", "CHoCH formed"], ["ENTRY_READY", "Entry ready"],
@@ -124,12 +125,18 @@ function drawDetail() {
     ["Sweep strength", w.depth.toFixed(2) + "× ATR"]];
   if (s.choch) L.push([`CHoCH (${LT})`, `${when(s.choch.t)} · ${fmt(p, s.choch.level)}`], ["Displacement", s.disp.toFixed(2) + `× ${LT} ATR`]);
   if (s.eq != null) L.push([s.dir === 1 ? "Discount below (50%)" : "Premium above (50%)", fmt(p, s.eq) + (s.pd ? " ✓" : " ✗")]);
-  if (s.zone) L.push(["Entry zone", `${s.zone.type} ${fmt(p, s.zone.lo)}–${fmt(p, s.zone.hi)}`], ["Entry (limit)", fmt(p, s.entry)], ["Stop", fmt(p, s.sl)]);
+  const o = s.order;
+  if (s.zone) L.push(["Entry zone", `${s.zone.type} ${fmt(p, s.zone.lo)}–${fmt(p, s.zone.hi)} <span class="muted">formed ${when(s.zone.t)}</span>`]);
+  if (o) L.push(["Order", `${o.side} limit ${fmt(p, o.price)} <span class="muted">${o.zoneType}</span>`],
+    ["Order active from", `${when(o.activeT)} <span class="muted">${o.activeT === w.t + SEC[tf] ? T + " sweep candle closed" : "zone confirmed (" + LT + " candle after the CHoCH closed)"}</span>`],
+    ["Order status", ORDST[o.state] + (o.why ? ` <span class="muted">${o.why}</span>` : "")], ["Stop", fmt(p, s.sl)]);
   L.push(["Target", w.target != null ? `${fmt(p, w.target)} <span class="muted">${T} ${w.targetLabel}</span>` : "–"]);
   if (s.rr != null) L.push(["R:R", s.rr.toFixed(2)]);
   if (s.dist != null && ACTIVE.includes(s.status)) L.push(["Distance to entry", s.dist.toFixed(1) + " " + unit(p)]);
-  if (s.tFill) L.push(["Filled", when(s.tFill)]);
-  if (s.tExit) L.push([STATUS[s.status], when(s.tExit)]);
+  if (s.tFill) L.push([`Simulated entry (${o ? o.side : ""})`, `${when(s.tFill)} · ${fmt(p, s.fillPx)} <span class="muted">${LT} candle that touched the limit</span>`]);
+  if (s.tExit && s.exitPx != null) L.push([s.status === "TARGET_HIT" ? "Exit – target" : "Exit – stop", `${when(s.tExit)} · ${fmt(p, s.exitPx)}` + (s.exitNote ? ` <span class="muted">${s.exitNote}</span>` : "")]);
+  else if (s.tExit) L.push([o && o.state === "CANCELLED" ? "Order cancelled" : STATUS[s.status], when(s.tExit)]);
+  if (s.tFill || s.tExit) L.push(["Note", '<span class="muted">Simulated from ' + LT + ' high/low only; the order of events inside one candle is not known.</span>']);
   $("#swLv").innerHTML = L.map(([k, v]) => `<div>${k}<b>${v}</b></div>`).join("");
   $("#swWhy").textContent = why(s, T, LT);
   draw4h(p, s, tf); draw15(p, s, tf);
@@ -139,7 +146,8 @@ function why(s, T, LT) {
   if (s.status === "SWEEPING") return `The current ${T} candle is beyond the ${T} swing ${side}. It becomes a sweep only if it closes back inside (closes in ${left(s)}).`;
   if (s.status === "SWEEP" || s.status === "NO_LTF") return `${T} swept the swing ${side} and closed back inside. Waiting for a ${LT} close through the last ${LT} swing ${s.dir === 1 ? "high" : "low"} (CHoCH).`;
   if (s.status === "CHOCH") return `${LT} CHoCH formed, but no FVG or order block was found for an entry.`;
-  if (s.status === "ENTRY_READY") return `Limit ${s.dir === 1 ? "buy" : "sell"} at ${s.entry} (near edge of the ${s.zone.type}); stop ${s.sl}; target ${w.target} (${T} ${w.targetLabel}).`;
+  if (s.status === "ENTRY_READY" && s.order && s.order.state === "WAITING") return `Zone confirmed. The ${s.dir === 1 ? "buy" : "sell"} limit at ${s.entry} becomes active when the current ${LT} candle closes; stop ${s.sl}; target ${w.target}.`;
+  if (s.status === "ENTRY_READY") return `Pending limit ${s.dir === 1 ? "buy" : "sell"} at ${s.entry} (near edge of the ${s.zone.type}); stop ${s.sl}; target ${w.target} (${T} ${w.targetLabel}).`;
   if (s.status === "ENTERED") return "Price came back to the entry; the trade is running.";
   return { TARGET_HIT: "Reached the opposite liquidity.", STOPPED: "Went beyond the sweep extreme after the entry.", INVALIDATED: "Went beyond the sweep extreme before the entry.",
     MISSED: "Reached the target without coming back to the entry.", EXPIRED: `No entry within 6 ${T} candles after the sweep.` }[s.status] || "";
@@ -178,7 +186,9 @@ function hline(k, v, col, txt, x0, dash, width) {
   if (txt) k.tags.push([y, col, txt]);
 }
 function label(k, txt, x, y, col, align) {
-  const { g } = k; g.save(); g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = col; g.textAlign = align || "center"; g.fillText(txt, x, y); g.restore();
+  const { g } = k; g.save(); g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif"; g.fillStyle = col; g.textAlign = align || "center";
+  const wd = g.measureText(txt).width, lo = (align === "left" ? 0 : align === "right" ? wd : wd / 2) + 2, hi = k.plotW + 4 - (align === "left" ? wd : align === "right" ? 0 : wd / 2);
+  g.fillText(txt, Math.max(lo, Math.min(hi, x)), y); g.restore();     // keep labels inside the plot
 }
 function finish(k, cs, intraday, p, price) {
   const { g, C, X, H, plotW } = k;
@@ -224,7 +234,11 @@ function draw4h(p, s, tf) {
     label(k, w.live ? "still open" : "back inside ✓", X(iS), d === 1 ? Math.max(padT + 8, Y(c[2]) - 6) : Math.min(H - padB - 4, Y(c[3]) + 14), w.live ? C.amber : col);
   }
   if (w.target != null) hline(k, w.target, C.blue, "TP", iS >= 0 ? X(iS) : 0, false);
-  if (s.entry != null) { hline(k, s.entry, col, "Entry", iS >= 0 ? X(iS) : 0, true); hline(k, s.sl, C.dn, "SL", iS >= 0 ? X(iS) : 0, true); }
+  if (s.order) {            // from the higher-timeframe candle in which the order became active
+    let iA = -1; for (let i = 0; i < cs.length; i++) if (cs[i][0] <= s.order.activeT) iA = i;
+    const x0 = iA >= 0 ? X(iA) - step / 2 : 0, filled = s.order.state === "FILLED";
+    hline(k, s.entry, col, filled ? "Entry" : s.order.side + " LMT", x0, !filled, filled ? 1.6 : 1.3); hline(k, s.sl, C.dn, "SL", x0, true);
+  } else if (s.entry != null) { hline(k, s.entry, col, "Entry", 0, true); hline(k, s.sl, C.dn, "SL", 0, true); }
   finish(k, cs, tf !== "D", p, p.price);
 }
 function draw15(p, s, tf) {
@@ -233,7 +247,10 @@ function draw15(p, s, tf) {
   const k0 = c4.findIndex(c => c[0] === w.t), tPrev = k0 > 0 ? c4[k0 - 1][0] : w.t - SEC[tf];
   let start = all.findIndex(c => c[0] >= tPrev);
   if (start < 0 || all.length - start < 3) { const k = base(cv, all.length ? all.slice(-20) : [[0, 1, 1, 1, 1]], []); k.g.fillStyle = k.C.sec; k.g.fillText(`No ${LT} candles for this sweep in the current data.`, 10, k.H / 2); return; }
-  if (all.length - start > 190) start = all.length - 190;
+  if (all.length - start > 190) {          // trim old candles, but never past the start of the setup (extreme, CHoCH reference, zone)
+    const anc = Math.min(...[s.extT, s.choch && s.choch.refT, s.zone && s.zone.t].filter(v => v != null)), ia = isFinite(anc) ? all.findIndex(c => c[0] >= anc) : -1;
+    start = Math.max(start, Math.min(all.length - 190, ia >= 0 ? ia - 4 : all.length));
+  }
   const cs = all.slice(start), idx = t => cs.findIndex(c => c[0] === t);
   const k = base(cv, cs, [w.level, s.ext, s.eq, s.choch && s.choch.level, s.watch && s.watch.level, s.zone && s.zone.lo, s.zone && s.zone.hi, s.sl, s.entry]);
   const { g, C, X, Y, step, plotW, padT, H, padB } = k, col = d === 1 ? C.up : C.dn;
@@ -270,13 +287,56 @@ function draw15(p, s, tf) {
       label(k, `Disp ${s.disp.toFixed(1)}×`, X(iD), d === 1 ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(padT + 10, Y(c[2]) - 7), C.amber); }
   }
   if (s.eq != null) hline(k, s.eq, C.sec, "50%", Math.max(0, X(Math.max(0, idx(s.extT))) - step / 2), true, 1);
-  if (s.entry != null) { hline(k, s.entry, col, "Entry", Math.max(0, X(idx(s.zone.t)) - step / 2), false, 1.6); hline(k, s.sl, C.dn, "SL", 0, true); }
   if (w.target != null && (s.entry != null || s.choch)) hline(k, w.target, C.blue, "TP", 0, true);
-  if (s.tFill) { const i = idx(s.tFill); if (i >= 0) { const c = cs[i], ya = d === 1 ? Y(c[3]) + 8 : Y(c[2]) - 8; g.fillStyle = col; g.beginPath();
-    if (d === 1) { g.moveTo(X(i), ya); g.lineTo(X(i) - 6, ya + 10); g.lineTo(X(i) + 6, ya + 10); } else { g.moveTo(X(i), ya); g.lineTo(X(i) - 6, ya - 10); g.lineTo(X(i) + 6, ya - 10); }
-    g.fill(); label(k, "Entry", X(i), d === 1 ? ya + 21 : ya - 13, col); } }
-  if (s.tExit) { const i = idx(s.tExit); if (i >= 0) label(k, s.status === "TARGET_HIT" ? "✓ TP" : s.status === "STOPPED" ? "✕ SL" : "✕", X(i), padT + 14, s.status === "TARGET_HIT" ? C.up : C.dn); }
+  if (s.order) drawOrder(k, cs, s, d, col);
+  else if (s.entry != null) { hline(k, s.entry, col, "Entry", 0, true); hline(k, s.sl, C.dn, "SL", 0, true); }   // data from before the order marks existed
   finish(k, cs, true, p, p.price);
+}
+
+// order marks: pending limit (dashed, from the activation candle), simulated fill (solid arrow on the touching candle),
+// stop exit (red cross at the stop price), target exit (blue circle at the target price); never before the order was active
+function drawOrder(k, cs, s, d, col) {
+  const { g, C, X, Y, step, plotW, padT, H, padB } = k, o = s.order, at = t => cs.findIndex(c => c[0] >= t), hm = t => { const z = new Date(t * 1000);
+    return String(z.getHours()).padStart(2, "0") + ":" + String(z.getMinutes()).padStart(2, "0"); };
+  const iA = at(o.activeT), xA = iA >= 0 ? X(iA) - step / 2 : X(cs.length - 1) + step / 2;
+  const iF = s.tFill ? cs.findIndex(c => c[0] === s.tFill) : -1, iE = s.tExit ? cs.findIndex(c => c[0] === s.tExit) : -1;
+  const yE = Y(o.price), xF = iF >= 0 ? X(iF) : null;
+  const xEnd = o.state === "CANCELLED" && iE >= 0 ? X(iE) + step / 2 : plotW + 6;
+  // stop line from activation
+  g.save(); g.strokeStyle = C.dn; g.lineWidth = 1.2; g.setLineDash([5, 4]); g.beginPath(); g.moveTo(xA, Y(s.sl)); g.lineTo(plotW + 6, Y(s.sl)); g.stroke(); g.restore();
+  k.tags.push([Y(s.sl), C.dn, "SL"]);
+  // pending part: dashed, thin; grey once cancelled
+  const pendCol = o.state === "CANCELLED" ? C.sec : col;
+  g.save(); g.strokeStyle = pendCol; g.lineWidth = 1.4; g.setLineDash([6, 4]); g.beginPath(); g.moveTo(xA, yE); g.lineTo(xF != null ? xF : xEnd, yE); g.stroke(); g.restore();
+  // activation tick: hollow diamond
+  g.save(); g.strokeStyle = pendCol; g.fillStyle = css("--card") || "#fff"; g.lineWidth = 1.5; g.beginPath();
+  g.moveTo(xA, yE - 5); g.lineTo(xA + 5, yE); g.lineTo(xA, yE + 5); g.lineTo(xA - 5, yE); g.closePath(); g.fill(); g.stroke(); g.restore();
+  const pend = o.state === "WAITING" ? "limit – active next candle" : o.state === "CANCELLED" ? `${o.side} limit cancelled` : `pending ${o.side} limit`;
+  if (xF == null || xF - xA > 70) label(k, pend, Math.min(xA + 8, plotW - 110), d === 1 ? yE + 13 : yE - 6, pendCol, "left");
+  if (o.state === "CANCELLED" && iE >= 0) label(k, "✕", X(iE), yE + 4, C.sec);
+  // filled part: solid, thicker
+  if (xF != null) {
+    const xs = iE >= 0 && s.exitPx != null ? X(iE) : plotW + 6;
+    g.save(); g.strokeStyle = col; g.lineWidth = 2; g.beginPath(); g.moveTo(xF, yE); g.lineTo(xs, yE); g.stroke(); g.restore();
+    const c = cs[iF], ya = d === 1 ? Y(c[3]) + 6 : Y(c[2]) - 6, dir = d === 1 ? 1 : -1;      // arrow below a buy candle pointing up, above a sell candle pointing down
+    g.save(); g.fillStyle = col; g.beginPath(); g.moveTo(X(iF), ya); g.lineTo(X(iF) - 6, ya + 9 * dir); g.lineTo(X(iF) - 2.2, ya + 9 * dir); g.lineTo(X(iF) - 2.2, ya + 17 * dir);
+    g.lineTo(X(iF) + 2.2, ya + 17 * dir); g.lineTo(X(iF) + 2.2, ya + 9 * dir); g.lineTo(X(iF) + 6, ya + 9 * dir); g.closePath(); g.fill(); g.restore();
+    g.save(); g.fillStyle = col; g.beginPath(); g.arc(X(iF), yE, 3, 0, 7); g.fill(); g.restore();
+    const ly = d === 1 ? Math.min(H - padB - 2, ya + 29) : Math.max(padT + 10, ya - 21);
+    label(k, `${o.side} ${hm(s.tFill)}`, X(iF), ly, col);
+    k.tags.push([yE, col, "Entry"]);
+  } else k.tags.push([yE, pendCol, o.side + " LMT"]);
+  // exit marks
+  if (iE >= 0 && s.exitPx != null) {
+    const y = Y(s.exitPx), x = X(iE), note = s.exitNote ? "*" : "";
+    if (s.status === "STOPPED") {
+      g.save(); g.strokeStyle = C.dn; g.lineWidth = 2.4; g.beginPath(); g.moveTo(x - 5, y - 5); g.lineTo(x + 5, y + 5); g.moveTo(x + 5, y - 5); g.lineTo(x - 5, y + 5); g.stroke(); g.restore();
+      label(k, "SL" + note + " " + hm(s.tExit), x, d === 1 ? y + 16 : y - 9, C.dn);
+    } else {
+      g.save(); g.fillStyle = C.blue; g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); g.restore(); label(k, "✓", x, y + 3.5, "#fff");
+      label(k, "TP " + hm(s.tExit), x, d === 1 ? y - 10 : y + 18, C.blue);
+    }
+  }
 }
 
 /* ---------- export ---------- */

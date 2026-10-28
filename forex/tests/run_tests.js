@@ -118,8 +118,9 @@ check("[regression] phone engine loads 1 year of hourly data like the GitHub sca
 // 4H sweep rules on hand-worked candles (sweep_cases.json; expected values worked out by hand)
 {
   const SW = window.FXSweep, Z = JSON.parse(fs.readFileSync(path.join(__dirname, "sweep_cases.json"), "utf8"));
-  const sub = (got, exp) => exp === null ? got === null : Object.entries(exp).every(([k, v]) =>
-    v !== null && typeof v === "object" ? sub(got[k], v) : typeof v === "number" ? Math.abs(got[k] - v) < 1e-9 : got[k] === v);
+  const sub = (got, exp) => exp === null ? got == null :  // a missing field counts as null
+    Object.entries(exp).every(([k, v]) =>
+    v !== null && typeof v === "object" ? sub(got[k], v) : typeof v === "number" ? Math.abs(got[k] - v) < 1e-9 : v === null ? got[k] == null : got[k] === v);
   for (const c of Z.sweeps) { const g = SW.sweepAt(c.c4, c.j, c.live); check(`[sweep] ${c.name}`, sub(g, c.expect), g); }
   for (const c of Z.ltf) { const sw = SW.sweepAt(c.c4, c.j, false), g = SW.ltfSetup(sw, c.c4, c.m15, true); check(`[sweep 15m] ${c.name}`, sub(g, c.expect), g); }
 }
@@ -163,13 +164,14 @@ check("[regression] phone engine loads 1 year of hourly data like the GitHub sca
     for (const [key, list] of Object.entries(got)) for (const r of list) {
       const k = r.sweep.t + "|" + r.dir, s = seen[key].get(k) || {};
       if (r.zone) { const f = JSON.stringify([r.choch, r.zone, r.entry, r.sl, r.tp, r.disp]); if (s.f) { checked++; if (s.f !== f) changed++; } s.f = f; }
-      if (r.tFill != null) { if (s.fill) { checked++; if (s.fill !== r.tFill) changed++; } s.fill = r.tFill; if (r.tFill < r.sweep.t + SEC[key]) early++; }
+      if (r.tFill != null) { if (s.fill) { checked++; if (s.fill !== r.tFill) changed++; } s.fill = r.tFill;
+        if (r.tFill < r.sweep.t + SEC[key] || r.tFill < r.order.activeT || r.tFill <= r.choch.t) early++; }
       if (["TARGET_HIT", "STOPPED", "INVALIDATED", "MISSED", "EXPIRED"].includes(r.status)) { if (s.end) { checked++; if (s.end !== r.status) changed++; } s.end = r.status; }
       seen[key].set(k, s);
     }
   }
   check(`[no repaint] ${checked} later re-checks of known CHoCH/zone/levels/fills/results: none changed`, changed === 0 && checked > 50, { changed, checked });
-  check("[no look-ahead] no fill before the higher-timeframe sweep candle closed (1D, 4H, 2H)", early === 0, { early });
+  check("[no look-ahead] no fill before the sweep candle closed, the CHoCH, or the order became active (1D, 4H, 2H)", early === 0, { early });
 }
 // New York anchoring through both daylight-saving switches (parity fixture, Feb-Nov 2025): build() must equal
 // candles made independently bar by bar with Intl (4H blocks 01/05/.. NY, 2H odd hours, days from 17:00 NY)

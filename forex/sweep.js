@@ -159,27 +159,39 @@ function ltfSetup(sw, c4, m15, openLast, sec) {
   out.rr = tp != null && (tp - entry) * d > 0 && Math.abs(sl - entry) > 0 ? Math.abs(tp - entry) / Math.abs(sl - entry) : null;
   // step 8: walk forward from the candle after the zone exists (the open candle counts: a touch is a touch)
   out.status = "ENTRY_READY";
-  // the sweep is only confirmed when the 4H candle has closed back inside: no fill before that
+  // the order: a limit at the zone's near edge. It becomes ACTIVE only when (a) the zone is known - the candle after the
+  // CHoCH has closed - and (b) the higher-timeframe sweep candle has closed back inside. Touches before that don't count.
   const tConf = j + 1 < c4.length ? c4[j + 1][0] : t4 + sec;
+  const tZone = m15[b + 1][0] + step;
+  const order = out.order = { dir: d, side: d === 1 ? "BUY" : "SELL", kind: "limit", price: entry, zoneType: best.type,
+    activeT: Math.max(tZone, tConf), state: "PENDING" };
+  if (order.activeT > m15[n - 1][0]) order.state = "WAITING";          // not active yet (higher-timeframe candle still open)
   let filled = false;
-  // the zone is only usable once the CHoCH has closed (an FVG can be older than the CHoCH): start after both
-  for (let k = Math.max(best.from, b) + 1; k < n; k++) {
+  // walk from the first candle after the zone became known (candle b+2); each candle is judged on its high/low only:
+  // the order of events inside one candle is unknown, so collisions are resolved conservatively and flagged
+  for (let k = b + 2; k < n; k++) {
     const t = m15[k][0], hk = H(k), lk = L(k);
     if (!filled) {
-      if (t >= tExp) { out.status = "EXPIRED"; break; }
+      if (t >= tExp) { out.status = "EXPIRED"; order.state = "CANCELLED"; order.why = "expired: no fill within 6 candles of the sweep"; break; }
+      const active = t >= order.activeT;
       const touch = d === -1 ? hk >= entry : lk <= entry, stop = d === -1 ? hk > sl : lk < sl;
-      const fillable = touch && t >= tConf;
-      // target reached in this candle: before any fill -> missed. If the entry is touched in the same candle we cannot
-      // tell which came first, so it is not counted as a trade (missed) - unless the stop is also hit (then: stopped)
+      const fillable = touch && active;
       const hitT = tp != null && (d === -1 ? lk <= tp : hk >= tp);
-      if (hitT && !(fillable && stop)) { out.status = "MISSED"; out.tExit = t; break; }
-      if (stop && !fillable) { out.status = "INVALIDATED"; out.tExit = t; break; }
-      if (touch && t >= tConf) { filled = true; out.status = "ENTERED"; out.tFill = t; }
+      // target reached before any fill -> missed. Entry and target inside the same candle: which came first is unknown,
+      // so it is not counted as a trade - unless the stop is also inside that candle (then: filled and stopped)
+      if (hitT && !(fillable && stop)) { out.status = "MISSED"; out.tExit = t; order.state = "CANCELLED";
+        order.why = fillable ? "entry and target inside the same candle - order of events unknown, not counted" : "target reached before the entry"; break; }
+      if (stop && !fillable) { out.status = "INVALIDATED"; out.tExit = t; order.state = "CANCELLED";
+        order.why = active ? "price went beyond the stop without a fill" : "price went beyond the stop before the order was active"; break; }
+      if (fillable) { filled = true; out.status = "ENTERED"; out.tFill = t; out.fillPx = entry; order.state = "FILLED"; }
     }
     if (filled) {
       const stop = d === -1 ? hk >= sl : lk <= sl, hit = tp != null && (d === -1 ? lk <= tp : hk >= tp);
-      if (stop) { out.status = "STOPPED"; out.tExit = t; break; }          // same candle as the target: stop first
-      if (hit) { out.status = "TARGET_HIT"; out.tExit = t; break; }
+      if (stop) { out.status = "STOPPED"; out.tExit = t; out.exitPx = sl;
+        if (hit) out.exitNote = "stop and target both inside this candle - order unknown, counted as a stop";
+        else if (t === out.tFill) out.exitNote = "filled and stopped inside the same candle - order unknown, counted as a stop";
+        break; }
+      if (hit) { out.status = "TARGET_HIT"; out.tExit = t; out.exitPx = tp; break; }
     }
   }
   return out;
