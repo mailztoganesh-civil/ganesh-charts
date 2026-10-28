@@ -137,6 +137,11 @@ function ltfSetup(sw, c4, m15, openLast) {
   delete best.bd; out.zone = best;
   const entry = d === -1 ? best.lo : best.hi, sl = out.ext, tp = sw.target;
   out.entry = entry; out.sl = sl; out.tp = tp;
+  // TTrades discount / premium: dealing range = sweep extreme .. the far end of the move up to when the zone is
+  // known (candles X .. max(zone, CHoCH)). Longs want the entry at or below its 50% (discount), shorts at or above.
+  { let far = d === -1 ? Infinity : -Infinity;
+    for (let k = X; k <= Math.max(best.from, b); k++) far = d === -1 ? Math.min(far, L(k)) : Math.max(far, H(k));
+    out.eq = (far + sl) / 2; out.pd = d === -1 ? entry >= out.eq : entry <= out.eq; }
   out.rr = tp != null && (tp - entry) * d > 0 && Math.abs(sl - entry) > 0 ? Math.abs(tp - entry) / Math.abs(sl - entry) : null;
   // step 8: walk forward from the candle after the zone exists (the open candle counts: a touch is a touch)
   out.status = "ENTRY_READY";
@@ -168,7 +173,9 @@ function quality(sw, x) {
   const c = { swing: sw.swingSize >= 1.5, depth: sw.depth >= 0.1 && sw.depth <= 1.0, disp: x.disp != null && x.disp >= 1.5,
     fvg: !!(x.zone && x.zone.type === "FVG"), rr: x.rr != null && x.rr >= 2 };
   const n = Object.values(c).filter(Boolean).length;
-  return { checks: c, score: n, grade: n >= 4 ? "A" : n === 3 ? "B" : "C" };
+  // TTrades entry checklist (video "A ICT Entry Checklist"): stop raid, structure shift, discount/premium, PD array, solid R:R
+  const tt = { raid: true, shift: !!x.choch, pd: x.pd === true, array: !!x.zone, rr: x.rr != null && x.rr >= 2 };
+  return { checks: c, score: n, grade: n >= 4 ? "A" : n === 3 ? "B" : "C", tt, ttN: Object.values(tt).filter(Boolean).length };
 }
 
 /* Everything for one symbol: 4H sweeps of the last RECENT 4H candles (newest first), each with its 15m setup.

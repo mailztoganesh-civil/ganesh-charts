@@ -12,7 +12,7 @@ const ACTIVE = ["SWEEPING", "SWEEP", "NO_LTF", "CHOCH", "ENTRY_READY", "ENTERED"
 const ORDER = { ENTRY_READY: 0, ENTERED: 1, CHOCH: 2, SWEEP: 3, NO_LTF: 3, SWEEPING: 4, TARGET_HIT: 5, STOPPED: 6, INVALIDATED: 7, MISSED: 8, EXPIRED: 9 };
 const CHIPS = [["active", "Active"], ["SWEEPING", "Sweeping"], ["sweep", "Sweep only"], ["CHOCH", "CHoCH formed"], ["ENTRY_READY", "Entry ready"],
   ["ENTERED", "In trade"], ["finished", "Finished"]];
-const DEF = { sweep: 0.05, disp: 1.0, swing: 1.0, grade: "C", crt: false, finished: false };
+const DEF = { sweep: 0.05, disp: 1.0, swing: 1.0, grade: "C", crt: false, finished: false, tt: false };
 const GR = { A: 3, B: 2, C: 1 };
 let F = Object.assign({}, DEF, ls.get("sw-f", {})), st = ls.get("sw-st", "active"), dir = 0, data = null, openId = null;
 
@@ -32,6 +32,7 @@ function passes(p, s) {            // filters only hide setups, they never chang
   if (s.disp != null && s.disp < F.disp) return false;
   if (GR[s.q.grade] < GR[F.grade]) return false;
   if (F.crt && !crtOk(p, s)) return false;
+  if (F.tt && (s.q.ttN || 0) < 5) return false;
   return true;
 }
 function chipMatch(s, key) {
@@ -70,7 +71,7 @@ function table(list, title, sub) {
     list.map(({ p, s, id }) => `<tr data-sw="${esc(id)}"><td>${esc(p.sym)}</td><td>${when(s.sweep.t)} <span class="muted">${ago(s.sweep.t)}</span></td>` +
       `<td><span class="st st-${s.status}">${STATUS[s.status] || s.status}</span></td><td>${s.entry != null ? fmt(p, s.entry) : "–"}</td>` +
       `<td>${s.dist != null && ACTIVE.includes(s.status) ? s.dist.toFixed(1) : "–"}</td><td>${s.rr != null ? s.rr.toFixed(1) : "–"}</td>` +
-      `<td><b class="g g${s.q.grade}">${s.q.grade}</b></td><td>${crtOk(p, s) ? '<span class="crtok">✓</span>' : '<span class="muted">–</span>'}</td></tr>`).join("") +
+      `<td><b class="g g${s.q.grade}">${s.q.grade}</b> <span class="muted" title="TTrades checklist">${s.q.ttN != null ? s.q.ttN + "/5" : ""}</span></td><td>${crtOk(p, s) ? '<span class="crtok">✓</span>' : '<span class="muted">–</span>'}</td></tr>`).join("") +
     `</tbody></table></div>`;
 }
 
@@ -87,10 +88,14 @@ function drawDetail() {
   $("#swChecks").innerHTML = `<b class="g g${s.q.grade}">${s.q.grade}</b>${ck(c.swing, `4H swing ${w.swingSize.toFixed(1)}× ATR`)}${ck(c.depth, `sweep ${w.depth.toFixed(2)}× ATR`)}` +
     `${ck(c.disp, s.disp != null ? `displacement ${s.disp.toFixed(1)}×` : "displacement")}${ck(c.fvg, s.zone ? s.zone.type + " zone" : "FVG zone")}${ck(c.rr, s.rr != null ? `R:R ${s.rr.toFixed(1)}` : "R:R")}` +
     `${crtOk(p, s) ? '<span class="ok">✓ CRT confluence</span>' : ""}`;
+  const t = s.q.tt || {};
+  $("#swTT").innerHTML = `<i>TTrades checklist ${s.q.ttN || 0}/5</i>${ck(t.raid, "stop raid")}${ck(t.shift, "structure shift")}` +
+    `${ck(t.pd, s.dir === 1 ? "entry in discount" : "entry in premium")}${ck(t.array, s.zone ? "PD array: " + s.zone.type : "PD array")}${ck(t.rr, "solid R:R (≥ 2)")}`;
   const L = [["Swept level", `${fmt(p, w.level)} <span class="muted">4H swing ${up ? "low" : "high"}</span>`], ["Swing candle", when(w.swingT)],
     ["Sweep candle (4H)", when(w.t)], ["Sweep extreme", fmt(p, s.ext != null ? s.ext : w.ext)], ["Back into range", w.live ? "4H candle still open" : "✓ closed back inside"],
     ["Sweep strength", w.depth.toFixed(2) + "× ATR"]];
   if (s.choch) L.push(["CHoCH (15m)", `${when(s.choch.t)} · ${fmt(p, s.choch.level)}`], ["Displacement", s.disp.toFixed(2) + "× 15m ATR"]);
+  if (s.eq != null) L.push([s.dir === 1 ? "Discount below (50%)" : "Premium above (50%)", fmt(p, s.eq) + (s.pd ? " ✓" : " ✗")]);
   if (s.zone) L.push(["Entry zone", `${s.zone.type} ${fmt(p, s.zone.lo)}–${fmt(p, s.zone.hi)}`], ["Entry (limit)", fmt(p, s.entry)], ["Stop", fmt(p, s.sl)]);
   L.push(["Target", w.target != null ? `${fmt(p, w.target)} <span class="muted">${w.targetLabel}</span>` : "–"]);
   if (s.rr != null) L.push(["R:R", s.rr.toFixed(2)]);
@@ -202,7 +207,7 @@ function draw15(p, s) {
   if (start < 0 || all.length - start < 3) { const k = base(cv, all.length ? all.slice(-20) : [[0, 1, 1, 1, 1]], []); k.g.fillStyle = k.C.sec; k.g.fillText("No 15m candles for this sweep in the current data.", 10, k.H / 2); return; }
   if (all.length - start > 190) start = all.length - 190;
   const cs = all.slice(start), idx = t => cs.findIndex(c => c[0] === t);
-  const k = base(cv, cs, [w.level, s.ext, s.choch && s.choch.level, s.watch && s.watch.level, s.zone && s.zone.lo, s.zone && s.zone.hi, s.sl, s.entry]);
+  const k = base(cv, cs, [w.level, s.ext, s.eq, s.choch && s.choch.level, s.watch && s.watch.level, s.zone && s.zone.lo, s.zone && s.zone.hi, s.sl, s.entry]);
   const { g, C, X, Y, step, plotW, padT, H, padB } = k, col = d === 1 ? C.up : C.dn;
   grid(k, p);
   // 4H candle boundaries; the sweep candle is shaded
@@ -236,6 +241,7 @@ function draw15(p, s) {
     if (iD >= 0) { const c = cs[iD]; g.save(); g.strokeStyle = C.amber; g.lineWidth = 2; g.strokeRect(X(iD) - step / 2, Y(c[2]) - 3, step, Y(c[3]) - Y(c[2]) + 6); g.restore();
       label(k, `Disp ${s.disp.toFixed(1)}×`, X(iD), d === 1 ? Math.min(H - padB - 2, Y(c[3]) + 15) : Math.max(padT + 10, Y(c[2]) - 7), C.amber); }
   }
+  if (s.eq != null) hline(k, s.eq, C.sec, "50%", Math.max(0, X(Math.max(0, idx(s.extT))) - step / 2), true, 1);
   if (s.entry != null) { hline(k, s.entry, col, "Entry", Math.max(0, X(idx(s.zone.t)) - step / 2), false, 1.6); hline(k, s.sl, C.dn, "SL", 0, true); }
   if (w.target != null && (s.entry != null || s.choch)) hline(k, w.target, C.blue, "TP", 0, true);
   if (s.tFill) { const i = idx(s.tFill); if (i >= 0) { const c = cs[i], ya = d === 1 ? Y(c[3]) + 8 : Y(c[2]) - 8; g.fillStyle = col; g.beginPath();
@@ -297,11 +303,11 @@ function applyTheme(m) {
 }
 
 /* ---------- wiring ---------- */
-function syncInputs() { $("#fSweep").value = F.sweep; $("#fDisp").value = F.disp; $("#fSwing").value = F.swing; $("#fGrade").value = F.grade; $("#fCrt").checked = F.crt; $("#fFinished").checked = F.finished; }
+function syncInputs() { $("#fSweep").value = F.sweep; $("#fDisp").value = F.disp; $("#fSwing").value = F.swing; $("#fGrade").value = F.grade; $("#fCrt").checked = F.crt; $("#fFinished").checked = F.finished; $("#fTT").checked = !!F.tt; }
 function readInputs() { const num = (id, d) => { const v = parseFloat($(id).value); return isFinite(v) ? v : d; };
-  F = { sweep: num("#fSweep", DEF.sweep), disp: num("#fDisp", DEF.disp), swing: num("#fSwing", DEF.swing), grade: $("#fGrade").value, crt: $("#fCrt").checked, finished: $("#fFinished").checked };
+  F = { sweep: num("#fSweep", DEF.sweep), disp: num("#fDisp", DEF.disp), swing: num("#fSwing", DEF.swing), grade: $("#fGrade").value, crt: $("#fCrt").checked, finished: $("#fFinished").checked, tt: $("#fTT").checked };
   ls.set("sw-f", F); render(); }
-["#fSweep", "#fDisp", "#fSwing", "#fGrade", "#fCrt", "#fFinished"].forEach(id => $(id).addEventListener("change", readInputs));
+["#fSweep", "#fDisp", "#fSwing", "#fGrade", "#fCrt", "#fFinished", "#fTT"].forEach(id => $(id).addEventListener("change", readInputs));
 $("#swReset").onclick = () => { F = Object.assign({}, DEF); ls.set("sw-f", F); syncInputs(); render(); };
 $("#swChips").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; st = b.dataset.st; ls.set("sw-st", st); render(); });
 $("#swDir").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; dir = +b.dataset.dir;

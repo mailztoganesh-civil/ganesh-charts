@@ -184,6 +184,7 @@
         <label>Quality<select id="fGrade"><option value="C">All</option><option value="B">A and B</option><option value="A">A only</option></select></label>
       </div>
       <label class="rl"><input type="checkbox" id="fCrt"> <span><b>Only with CRT confluence</b> – the 4H or 1H CRT on the same pair points the same way (formed, forming, sweeping or C3 closure)</span></label>
+      <label class="rl"><input type="checkbox" id="fTT"> <span><b>Only TTrades checklist 5/5</b> – stop raid, structure shift, entry in discount (longs) / premium (shorts) of the move, a PD array (FVG / OB) and R:R ≥ 2</span></label>
       <label class="rl"><input type="checkbox" id="fFinished"> <span>Also show finished setups (target hit, stopped, invalidated, missed, expired)</span></label>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="chip" id="swCsv" type="button">⬇ Export CSV</button><button class="chip" id="swReset" type="button">Reset filters</button></div>
     </section>
@@ -208,6 +209,7 @@
       <b>6. Displacement</b> – the biggest 15m body from the extreme to the CHoCH, in 15m ATR(14).<br>
       <b>7. Entry zone</b> – the 15m FVG in that move (made by the biggest candle, at least 0.1 × ATR), else the order block (last opposite candle before the extreme). Entry = near edge of the zone, stop = sweep extreme, target = step 4.<br>
       <b>8. Status</b> – Sweeping → Sweep only → CHoCH → Entry ready → In trade → Target hit / Stopped. Before entry: Invalidated (beyond the stop), Missed (target first) or Expired (6 4H candles after the sweep).<br>
+      <b>TTrades checklist</b> (his “ICT Entry Checklist” video) – stop raid (the 4H sweep), structure shift (the 15m CHoCH), discount / premium (the entry is below the 50% of the move from the sweep extreme for longs, above it for shorts), PD array (the FVG or order block) and solid R:R (≥ 2). Shown as n/5.<br>
       <b>Grade</b> – one point each: swing ≥ 1.5 ATR, sweep 0.1–1.0 ATR, displacement ≥ 1.5 ATR, FVG zone, R:R ≥ 2. A = 4–5, B = 3, C = 0–2. Filters only hide setups; they never change what was detected.
     </section>
   </div>
@@ -234,15 +236,16 @@
       <div><div class="cap">15m – CHoCH, displacement, entry zone</div><canvas id="swCv2" aria-label="15 minute chart"></canvas></div>
     </div>
     <div class="q" id="swChecks"></div>
+    <div class="q" id="swTT"></div>
     <div class="lv" id="swLv"></div>
     <div class="muted" id="swWhy"></div>
   </div>
 </div>
-<script src="sweep.js?v=15"></script>
-<script src="live.js?v=15"></script>
-<script src="app.js?v=15"></script>
-<script src="sweep-ui.js?v=15"></script>
-<script src="export.js?v=15"></script>
+<script src="sweep.js?v=16"></script>
+<script src="live.js?v=16"></script>
+<script src="app.js?v=16"></script>
+<script src="sweep-ui.js?v=16"></script>
+<script src="export.js?v=16"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

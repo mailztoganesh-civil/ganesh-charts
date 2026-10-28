@@ -322,6 +322,82 @@
     "maxDD": 26.6
    }
   },
+  "entry in discount / premium (TTrades)": {
+   "train": {
+    "n": 39,
+    "win": 23.1,
+    "avgR": 1.089,
+    "se": 0.708,
+    "pf": 2.33,
+    "sumR": 42.5,
+    "maxDD": 10.8
+   },
+   "validation": {
+    "n": 34,
+    "win": 14.7,
+    "avgR": -0.378,
+    "se": 0.342,
+    "pf": 0.58,
+    "sumR": -12.8,
+    "maxDD": 21.9
+   },
+   "test": {
+    "n": 35,
+    "win": 17.1,
+    "avgR": -0.025,
+    "se": 0.423,
+    "pf": 0.97,
+    "sumR": -0.9,
+    "maxDD": 14.8
+   },
+   "all": {
+    "n": 108,
+    "win": 18.5,
+    "avgR": 0.266,
+    "se": 0.313,
+    "pf": 1.31,
+    "sumR": 28.7,
+    "maxDD": 29.4
+   }
+  },
+  "TTrades checklist 5/5": {
+   "train": {
+    "n": 38,
+    "win": 23.7,
+    "avgR": 1.144,
+    "se": 0.725,
+    "pf": 2.41,
+    "sumR": 43.5,
+    "maxDD": 10.8
+   },
+   "validation": {
+    "n": 31,
+    "win": 9.7,
+    "avgR": -0.492,
+    "se": 0.361,
+    "pf": 0.48,
+    "sumR": -15.3,
+    "maxDD": 22.4
+   },
+   "test": {
+    "n": 34,
+    "win": 17.6,
+    "avgR": 0.004,
+    "se": 0.435,
+    "pf": 1.0,
+    "sumR": 0.1,
+    "maxDD": 13.8
+   },
+   "all": {
+    "n": 103,
+    "win": 17.5,
+    "avgR": 0.275,
+    "se": 0.327,
+    "pf": 1.32,
+    "sumR": 28.3,
+    "maxDD": 29.3
+   }
+  },
   "app default filters (sweep >= 0.05, displacement >= 1.0, swing >= 1.0)": {
    "train": {
     "n": 105,

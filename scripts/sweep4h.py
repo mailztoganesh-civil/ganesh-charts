@@ -149,6 +149,11 @@ def ltf_setup(sw, c4, m15, open_last=True):
     best.pop("bd", None); out["zone"] = best
     entry = best["lo"] if d == -1 else best["hi"]; sl = out["ext"]; tp = sw["target"]
     out["entry"] = entry; out["sl"] = sl; out["tp"] = tp
+    # TTrades discount / premium: dealing range = sweep extreme .. far end of the move up to max(zone, CHoCH)
+    far = math.inf if d == -1 else -math.inf
+    for k in range(X, max(best["from"], b) + 1):
+        far = min(far, L(k)) if d == -1 else max(far, H(k))
+    out["eq"] = (far + sl) / 2; out["pd"] = (entry >= out["eq"]) if d == -1 else (entry <= out["eq"])
     out["rr"] = (abs(tp - entry) / abs(sl - entry)
                  if tp is not None and (tp - entry) * d > 0 and abs(sl - entry) > 0 else None)
     out["status"] = "ENTRY_READY"
@@ -182,7 +187,10 @@ def quality(sw, x):
     c = {"swing": sw["swingSize"] >= 1.5, "depth": 0.1 <= sw["depth"] <= 1.0, "disp": x.get("disp") is not None and x["disp"] >= 1.5,
          "fvg": bool(x.get("zone") and x["zone"]["type"] == "FVG"), "rr": x.get("rr") is not None and x["rr"] >= 2}
     n = sum(1 for v in c.values() if v)
-    return {"checks": c, "score": n, "grade": "A" if n >= 4 else "B" if n == 3 else "C"}
+    # TTrades entry checklist: stop raid, structure shift, discount/premium, PD array, solid R:R
+    tt = {"raid": True, "shift": bool(x.get("choch")), "pd": x.get("pd") is True, "array": bool(x.get("zone")),
+          "rr": x.get("rr") is not None and x["rr"] >= 2}
+    return {"checks": c, "score": n, "grade": "A" if n >= 4 else "B" if n == 3 else "C", "tt": tt, "ttN": sum(1 for v in tt.values() if v)}
 
 
 def scan(c4, m15, pip, price):

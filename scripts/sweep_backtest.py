@@ -98,6 +98,8 @@ VARIANTS = [
     ("displacement >= 1.5 ATR", lambda s: s["q"]["checks"]["disp"]),
     ("FVG zone only", lambda s: s["q"]["checks"]["fvg"]),
     ("R:R >= 2", lambda s: s["q"]["checks"]["rr"]),
+    ("entry in discount / premium (TTrades)", lambda s: s["x"].get("pd") is True),
+    ("TTrades checklist 5/5", lambda s: s["q"]["ttN"] == 5),
     ("app default filters (sweep >= 0.05, displacement >= 1.0, swing >= 1.0)",
      lambda s: s["sw"]["depth"] >= 0.05 and (s["x"].get("disp") or 0) >= 1.0 and s["sw"]["swingSize"] >= 1.0),
 ]
