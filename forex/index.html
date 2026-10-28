@@ -102,6 +102,10 @@
   .st-TARGET_HIT { color:var(--green); background:transparent; } .st-STOPPED, .st-INVALIDATED, .st-MISSED, .st-EXPIRED { color:var(--sec); background:transparent; }
   .crtok { color:var(--green); font-weight:800; }
   @media (max-width:520px) { .tbl .muted { display:none; } .tbl td, .tbl th { padding-left:4px; padding-right:4px; } }
+  .exmenu { position:fixed; z-index:40; top:calc(env(safe-area-inset-top,0px) + 62px); right:max(12px,env(safe-area-inset-right)); background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px; display:grid; gap:6px; width:min(300px,calc(100vw - 24px)); box-shadow:0 10px 30px rgba(0,0,0,.35); }
+  .exmenu button { border:0; background:var(--tint); color:var(--ink); border-radius:10px; padding:11px 12px; font-weight:700; font-size:14px; text-align:left; }
+  .extoast { position:fixed; z-index:50; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom,0px) + 18px); background:var(--navy); color:#fff; padding:10px 16px; border-radius:999px; font-size:14px; font-weight:600; }
+  .exx { margin-right:-2px; }
   button { cursor:pointer; font-family:inherit; }
   button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
 </style>
@@ -234,10 +238,11 @@
     <div class="muted" id="swWhy"></div>
   </div>
 </div>
-<script src="sweep.js?v=14"></script>
-<script src="live.js?v=14"></script>
-<script src="app.js?v=14"></script>
-<script src="sweep-ui.js?v=14"></script>
+<script src="sweep.js?v=15"></script>
+<script src="live.js?v=15"></script>
+<script src="app.js?v=15"></script>
+<script src="sweep-ui.js?v=15"></script>
+<script src="export.js?v=15"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

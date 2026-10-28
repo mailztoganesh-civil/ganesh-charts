@@ -387,7 +387,7 @@ function draw(cv, p, r, cs, o) {
     if (o.marks) { g.save(); g.font = "bold 10px " + FONT; g.fillStyle = sc;   // label beside the swing point (higher-TF chart)
       g.fillText(q.key + " · swept by C2", xs + 6, r.dir === 1 ? y + 13 : y - 5); g.restore(); }
     tags.push([y, sc, q.key]);
-  } else if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.ink, r.q.key, true);
+  } else if (r.q && r.q.keyLvl != null) hline(r.q.keyLvl, C.sec, r.q.key, true);
   const sweepPx = r.status === "formed" || r.status === "done" || r.status === "failed" || r.status === "c3close" ? r.inv : r.sweep;
   if (sweepPx != null && !o.m1) hline(sweepPx, C.dn, "Sweep", true);
   // Model-1 marks (lower-timeframe chart)
