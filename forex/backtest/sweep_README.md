@@ -28,6 +28,7 @@ Pairs: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, USDJPY, XAUUSD. forex-dat
 | R:R >= 2 | +0.253 (1059) | -0.053 (696) | +0.068 (921) | 19% |
 | entry in discount / premium (TTrades) | +0.215 (279) | -0.171 (192) | +0.250 (266) | 14% |
 | TTrades checklist 5/5 | +0.228 (274) | -0.185 (185) | +0.269 (260) | 13% |
+| A1 = grade A + TTrades checklist 5/5 | +0.466 (119) | -0.340 (81) | +0.640 (113) | 18% |
 | app default filters (sweep >= 0.05, displacement >= 1.0, swing >= 1.0) | +0.196 (789) | -0.036 (554) | +0.036 (666) | 27% |
 
 ## Per pair (all setups, whole period)

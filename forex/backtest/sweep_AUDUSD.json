@@ -398,6 +398,44 @@
     "maxDD": 72.1
    }
   },
+  "A1 = grade A + TTrades checklist 5/5": {
+   "train": {
+    "n": 17,
+    "win": 0.0,
+    "avgR": -1.036,
+    "se": 0.004,
+    "pf": 0.0,
+    "sumR": -17.6,
+    "maxDD": 17.6
+   },
+   "validation": {
+    "n": 7,
+    "win": 14.3,
+    "avgR": 0.15,
+    "se": 1.154,
+    "pf": 1.17,
+    "sumR": 1.0,
+    "maxDD": 6.0
+   },
+   "test": {
+    "n": 10,
+    "win": 20.0,
+    "avgR": 0.188,
+    "se": 0.821,
+    "pf": 1.23,
+    "sumR": 1.9,
+    "maxDD": 7.2
+   },
+   "all": {
+    "n": 34,
+    "win": 8.8,
+    "avgR": -0.432,
+    "se": 0.339,
+    "pf": 0.54,
+    "sumR": -14.7,
+    "maxDD": 23.8
+   }
+  },
   "app default filters (sweep >= 0.05, displacement >= 1.0, swing >= 1.0)": {
    "train": {
     "n": 92,

@@ -10,7 +10,7 @@ const STATUS = { SWEEPING: "Sweeping", SWEEP: "Sweep only", NO_LTF: "Sweep only"
   ENTERED: "In trade", TARGET_HIT: "Target hit", STOPPED: "Stopped", INVALIDATED: "Invalidated", MISSED: "Missed", EXPIRED: "Expired" };
 const ACTIVE = ["SWEEPING", "SWEEP", "NO_LTF", "CHOCH", "ENTRY_READY", "ENTERED"];
 const ORDER = { ENTRY_READY: 0, ENTERED: 1, CHOCH: 2, SWEEP: 3, NO_LTF: 3, SWEEPING: 4, TARGET_HIT: 5, STOPPED: 6, INVALIDATED: 7, MISSED: 8, EXPIRED: 9 };
-const CHIPS = [["active", "Active"], ["SWEEPING", "Sweeping"], ["sweep", "Sweep only"], ["CHOCH", "CHoCH formed"], ["ENTRY_READY", "Entry ready"],
+const CHIPS = [["a1", "★ A1 best"], ["active", "Active"], ["SWEEPING", "Sweeping"], ["sweep", "Sweep only"], ["CHOCH", "CHoCH formed"], ["ENTRY_READY", "Entry ready"],
   ["ENTERED", "In trade"], ["finished", "Finished"]];
 const DEF = { sweep: 0.05, disp: 1.0, swing: 1.0, grade: "C", crt: false, finished: false, tt: false };
 const GR = { A: 3, B: 2, C: 1 };
@@ -24,6 +24,8 @@ const when = t => { if (t == null) return "–"; const d = new Date(t * 1000);
   return d.toLocaleDateString([], { day: "2-digit", month: "short" }) + " " + String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
 const ago = t => { const m = Math.round((Date.now() / 1000 - t) / 60); return m < 60 ? m + "m" : m < 1440 ? Math.floor(m / 60) + "h" : Math.floor(m / 1440) + "d"; };
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+/* A1 = the best setups: grade A (4-5 of the quality points) and the full TTrades checklist (5/5) */
+const isA1 = s => s.q && s.q.grade === "A" && s.q.ttN === 5;
 function crtOk(p, s) {             // the CRT engine on the same pair points the same way on 4H or 1H
   return ["4H", "1H"].some(tf => { const r = p.tf && p.tf[tf]; return r && r.dir === s.dir && ["formed", "forming", "sweeping", "c3close"].includes(r.status); });
 }
@@ -36,6 +38,7 @@ function passes(p, s) {            // filters only hide setups, they never chang
   return true;
 }
 function chipMatch(s, key) {
+  if (key === "a1") return isA1(s) && ACTIVE.includes(s.status);
   if (key === "active") return ACTIVE.includes(s.status);
   if (key === "finished") return !ACTIVE.includes(s.status);
   if (key === "sweep") return s.status === "SWEEP" || s.status === "NO_LTF";
@@ -68,7 +71,7 @@ function table(list, title, sub) {
   const head = `<h2>${title} <span style="text-transform:none;letter-spacing:0;font-weight:600">· ${sub} · ${list.length}</span></h2>`;
   if (!list.length) return head + `<div class="empty">None right now.</div>`;
   return head + `<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Symbol</th><th>Sweep (4H)</th><th>Status</th><th>Entry</th><th>Dist</th><th>R:R</th><th>Grade</th><th>CRT</th></tr></thead><tbody>` +
-    list.map(({ p, s, id }) => `<tr data-sw="${esc(id)}"><td>${esc(p.sym)}</td><td>${when(s.sweep.t)} <span class="muted">${ago(s.sweep.t)}</span></td>` +
+    list.map(({ p, s, id }) => `<tr data-sw="${esc(id)}"><td>${esc(p.sym)}${isA1(s) ? ' <span class="a1">A1</span>' : ""}</td><td>${when(s.sweep.t)} <span class="muted">${ago(s.sweep.t)}</span></td>` +
       `<td><span class="st st-${s.status}">${STATUS[s.status] || s.status}</span></td><td>${s.entry != null ? fmt(p, s.entry) : "–"}</td>` +
       `<td>${s.dist != null && ACTIVE.includes(s.status) ? s.dist.toFixed(1) : "–"}</td><td>${s.rr != null ? s.rr.toFixed(1) : "–"}</td>` +
       `<td><b class="g g${s.q.grade}">${s.q.grade}</b> <span class="muted" title="TTrades checklist">${s.q.ttN != null ? s.q.ttN + "/5" : ""}</span></td><td>${crtOk(p, s) ? '<span class="crtok">✓</span>' : '<span class="muted">–</span>'}</td></tr>`).join("") +
