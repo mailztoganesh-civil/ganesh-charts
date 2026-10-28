@@ -10,12 +10,13 @@
  ],
  "funnel": {
   "sweeps (closed back inside)": 31,
-  "with 15m CHoCH": 31,
+  "with lower-timeframe CHoCH": 31,
   "orders placed": 31,
   "filled": 26,
   "cancelled: invalidated": 0,
   "cancelled: missed": 0,
-  "cancelled: expired": 5
+  "cancelled: expired": 5,
+  "cancelled: fill and target in one bar": 0
  },
  "variants": {
   "all setups (rules as in the app)": {
@@ -96,13 +97,13 @@
   },
   "grade A": {
    "train": {
-    "n": 7,
+    "n": 6,
     "win": 0.0,
     "avgR": -1.007,
     "se": 0.001,
     "pf": 0.0,
-    "sumR": -7.0,
-    "maxDD": 7.0
+    "sumR": -6.0,
+    "maxDD": 6.0
    },
    "validation": {
     "n": 5,
@@ -123,13 +124,77 @@
     "maxDD": 1.0
    },
    "all": {
-    "n": 15,
-    "win": 6.7,
-    "avgR": -0.731,
-    "se": 0.275,
-    "pf": 0.22,
-    "sumR": -11.0,
-    "maxDD": 13.1
+    "n": 14,
+    "win": 7.1,
+    "avgR": -0.712,
+    "se": 0.295,
+    "pf": 0.24,
+    "sumR": -10.0,
+    "maxDD": 12.1
+   }
+  },
+  "grade B": {
+   "train": {
+    "n": 6,
+    "win": 0.0,
+    "avgR": -1.009,
+    "se": 0.001,
+    "pf": 0.0,
+    "sumR": -6.1,
+    "maxDD": 6.1
+   },
+   "validation": {
+    "n": 3,
+    "win": 0.0,
+    "avgR": -1.025,
+    "se": 0.007,
+    "pf": 0.0,
+    "sumR": -3.1,
+    "maxDD": 3.1
+   },
+   "test": {
+    "n": 2,
+    "win": 0.0,
+    "avgR": -1.009,
+    "se": 0.003,
+    "pf": 0.0,
+    "sumR": -2.0,
+    "maxDD": 2.0
+   },
+   "all": {
+    "n": 11,
+    "win": 0.0,
+    "avgR": -1.013,
+    "se": 0.003,
+    "pf": 0.0,
+    "sumR": -11.1,
+    "maxDD": 11.1
+   }
+  },
+  "grade C": {
+   "train": {
+    "n": 0
+   },
+   "validation": {
+    "n": 0
+   },
+   "test": {
+    "n": 1,
+    "win": 0.0,
+    "avgR": -1.013,
+    "se": null,
+    "pf": 0.0,
+    "sumR": -1.0,
+    "maxDD": 1.0
+   },
+   "all": {
+    "n": 1,
+    "win": 0.0,
+    "avgR": -1.013,
+    "se": null,
+    "pf": 0.0,
+    "sumR": -1.0,
+    "maxDD": 1.0
    }
   },
   "4H swing >= 1.5 ATR": {
@@ -248,13 +313,13 @@
   },
   "FVG zone only": {
    "train": {
-    "n": 8,
+    "n": 7,
     "win": 0.0,
     "avgR": -1.007,
     "se": 0.001,
     "pf": 0.0,
-    "sumR": -8.1,
-    "maxDD": 8.1
+    "sumR": -7.1,
+    "maxDD": 7.1
    },
    "validation": {
     "n": 4,
@@ -275,13 +340,13 @@
     "maxDD": 2.0
    },
    "all": {
-    "n": 16,
-    "win": 6.2,
-    "avgR": -0.749,
-    "se": 0.258,
-    "pf": 0.21,
-    "sumR": -12.0,
-    "maxDD": 13.1
+    "n": 15,
+    "win": 6.7,
+    "avgR": -0.732,
+    "se": 0.275,
+    "pf": 0.22,
+    "sumR": -11.0,
+    "maxDD": 12.1
    }
   },
   "R:R >= 2": {
@@ -486,18 +551,18 @@
    "maxDD": 4.1
   },
   "London": {
-   "n": 7,
-   "win": 14.3,
-   "avgR": -0.418,
-   "se": 0.59,
-   "pf": 0.52,
-   "sumR": -2.9,
-   "maxDD": 6.0
+   "n": 5,
+   "win": 20.0,
+   "avgR": -0.184,
+   "se": 0.827,
+   "pf": 0.77,
+   "sumR": -0.9,
+   "maxDD": 4.0
   },
   "NY AM": {
    "n": 9,
    "win": 0.0,
-   "avgR": -1.009,
+   "avgR": -1.008,
    "se": 0.002,
    "pf": 0.0,
    "sumR": -9.1,
@@ -506,20 +571,20 @@
   "NY PM": {
    "n": 4,
    "win": 0.0,
-   "avgR": -1.01,
+   "avgR": -1.009,
    "se": 0.002,
    "pf": 0.0,
    "sumR": -4.0,
    "maxDD": 4.0
   },
   "NY close": {
-   "n": 2,
+   "n": 4,
    "win": 0.0,
-   "avgR": -1.005,
+   "avgR": -1.007,
    "se": 0.002,
    "pf": 0.0,
-   "sumR": -2.0,
-   "maxDD": 2.0
+   "sumR": -4.0,
+   "maxDD": 4.0
   }
  },
  "exits": {
@@ -527,5 +592,215 @@
   "stop": 25,
   "time": 1
  },
- "same_bar_stop_and_target": 0
+ "same_bar_stop_and_target": 0,
+ "trades": [
+  [
+   1677247200,
+   -1.006,
+   "A",
+   4,
+   "train",
+   "NY AM"
+  ],
+  [
+   1687212000,
+   -1.0049,
+   "B",
+   4,
+   "train",
+   "NY close"
+  ],
+  [
+   1689174000,
+   -1.0074,
+   "B",
+   4,
+   "train",
+   "NY AM"
+  ],
+  [
+   1692106200,
+   -1.0042,
+   "A",
+   4,
+   "train",
+   "NY AM"
+  ],
+  [
+   1692972900,
+   -1.006,
+   "A",
+   4,
+   "train",
+   "NY AM"
+  ],
+  [
+   1694173200,
+   -1.0126,
+   "B",
+   5,
+   "train",
+   "London"
+  ],
+  [
+   1694687400,
+   -1.0069,
+   "B",
+   4,
+   "train",
+   "London"
+  ],
+  [
+   1705585200,
+   -1.0055,
+   "A",
+   4,
+   "train",
+   "NY AM"
+  ],
+  [
+   1713284400,
+   -1.0109,
+   "B",
+   4,
+   "train",
+   "NY PM"
+  ],
+  [
+   1713284400,
+   -1.0109,
+   "B",
+   4,
+   "train",
+   "NY PM"
+  ],
+  [
+   1716560700,
+   -1.0096,
+   "A",
+   5,
+   "train",
+   "NY AM"
+  ],
+  [
+   1717595400,
+   -1.012,
+   "A",
+   4,
+   "train",
+   "NY AM"
+  ],
+  [
+   1724394300,
+   -1.0165,
+   "B",
+   5,
+   "validation",
+   "London"
+  ],
+  [
+   1726696800,
+   -1.0033,
+   "A",
+   4,
+   "validation",
+   "NY close"
+  ],
+  [
+   1738867200,
+   -1.0032,
+   "A",
+   4,
+   "validation",
+   "NY PM"
+  ],
+  [
+   1743995400,
+   -1.0057,
+   "A",
+   5,
+   "validation",
+   "Asia"
+  ],
+  [
+   1748217600,
+   -1.038,
+   "B",
+   5,
+   "validation",
+   "Asia"
+  ],
+  [
+   1749210300,
+   -1.0047,
+   "A",
+   4,
+   "validation",
+   "London"
+  ],
+  [
+   1750086000,
+   -1.0192,
+   "B",
+   5,
+   "validation",
+   "NY AM"
+  ],
+  [
+   1750989000,
+   -1.0087,
+   "A",
+   4,
+   "validation",
+   "Asia"
+  ],
+  [
+   1752703500,
+   -1.0064,
+   "A",
+   5,
+   "test",
+   "NY close"
+  ],
+  [
+   1755244800,
+   3.1224,
+   "A",
+   4,
+   "test",
+   "London"
+  ],
+  [
+   1761759000,
+   -1.0129,
+   "C",
+   4,
+   "test",
+   "NY PM"
+  ],
+  [
+   1772727600,
+   -1.0063,
+   "B",
+   5,
+   "test",
+   "NY AM"
+  ],
+  [
+   1787000400,
+   -1.0116,
+   "B",
+   4,
+   "test",
+   "NY close"
+  ],
+  [
+   1789438800,
+   -1.0113,
+   "A",
+   4,
+   "test",
+   "Asia"
+  ]
+ ]
 }

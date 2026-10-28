@@ -102,7 +102,9 @@ function ltfSetup(sw, c4, m15, openLast, sec) {
   sec = sec || H4;                 // length of one higher-timeframe candle (4H default; 1D and 2H use the same rules)
   const d = sw.dir, j = sw.j;
   const t4 = c4[j][0], tPrev = c4[j - 1][0];
-  const tExp = j + 1 + P.EXPIRY < c4.length ? c4[j + 1 + P.EXPIRY][0] : t4 + (1 + P.EXPIRY) * sec;
+  // expiry = when the EXPIRY-th candle after the sweep candle opens. Until that candle exists it has not expired
+  // (a calendar guess would expire too early over weekends and then change later - a repaint)
+  const tExp = j + 1 + P.EXPIRY < c4.length ? c4[j + 1 + P.EXPIRY][0] : Infinity;
   const n = m15.length, lastClosed = n - 1 - (openLast ? 1 : 0);
   const a = m15.findIndex(b => b[0] >= tPrev), s = m15.findIndex(b => b[0] >= t4);
   const out = { status: "SWEEP", choch: null, zone: null };
@@ -110,7 +112,8 @@ function ltfSetup(sw, c4, m15, openLast, sec) {
   const H = k => m15[k][2], L = k => m15[k][3], O = k => m15[k][1], C = k => m15[k][4];
   // 15m swings against the sweep: bearish setup -> swing lows (k = 1 each side), bullish -> swing highs
   const isRef = i => i - 1 >= a && i + 1 < n && (d === -1 ? L(i) < L(i - 1) && L(i) <= L(i + 1) : H(i) > H(i - 1) && H(i) >= H(i + 1));
-  const refBefore = X => { for (let i = X - 1; i > a; i--) if (i + 1 <= X && isRef(i)) return i; return -1; };
+  // a 15m swing is only known once the candle after it has CLOSED (never use the candle that is still open)
+  const refBefore = X => { for (let i = X - 1; i > a; i--) if (i + 1 <= Math.min(X, lastClosed) && isRef(i)) return i; return -1; };
   // X = running 15m extreme since the sweep candle opened. The CHoCH must come after a candle that is the extreme
   // and after price has actually gone beyond the 4H level (the sweep), never on the extreme candle itself.
   let X = s, ref = refBefore(s), b = -1;
@@ -129,11 +132,16 @@ function ltfSetup(sw, c4, m15, openLast, sec) {
   for (let k = X; k <= b; k++) { const bd = Math.abs(C(k) - O(k)); if (bd > body) { body = bd; dispK = k; } }
   out.choch = { t: m15[b][0], level: d === -1 ? L(ref) : H(ref), refT: m15[ref][0], k: b };
   out.disp = body / a15; out.dispT = m15[dispK][0]; out.atr15 = a15;
-  // step 7: FVG in the move X .. b+1 (needs candle b+1 closed), else order block
+  // step 7: FVG in the move X .. b+1, else order block. The zone is chosen only once candle b+1 has closed, so it
+  // can never change afterwards (choosing earlier and again 15 minutes later would be a repaint)
+  if (b + 1 > lastClosed) { out.status = "CHOCH"; return out; }
+  // a 3-candle gap only counts when the 3 candles are back to back (a missing candle or the weekend is not an FVG)
+  let step = Infinity; for (let k = a + 1; k < n; k++) { const dt = m15[k][0] - m15[k - 1][0]; if (dt > 0 && dt < step) step = dt; }
+  const together = m => m15[m][0] - m15[m - 1][0] === step && m15[m + 1][0] - m15[m][0] === step;
   let best = null;
   for (let m = X + 1; m + 1 <= Math.min(b + 1, lastClosed); m++) {
     const lo = d === -1 ? H(m + 1) : H(m - 1), hi = d === -1 ? L(m - 1) : L(m + 1);
-    if (hi - lo >= P.FVG_MIN * a15) { const bd = Math.abs(C(m) - O(m)); if (!best || bd >= best.bd) best = { type: "FVG", lo, hi, t: m15[m - 1][0], from: m + 1, bd }; }
+    if (hi - lo >= P.FVG_MIN * a15 && together(m)) { const bd = Math.abs(C(m) - O(m)); if (!best || bd >= best.bd) best = { type: "FVG", lo, hi, t: m15[m - 1][0], from: m + 1, bd }; }
   }
   if (!best) {
     for (let k = X; k >= a; k--) if (d === -1 ? C(k) > O(k) : C(k) < O(k)) {
@@ -161,7 +169,10 @@ function ltfSetup(sw, c4, m15, openLast, sec) {
       if (t >= tExp) { out.status = "EXPIRED"; break; }
       const touch = d === -1 ? hk >= entry : lk <= entry, stop = d === -1 ? hk > sl : lk < sl;
       const fillable = touch && t >= tConf;
-      if (tp != null && (d === -1 ? lk <= tp : hk >= tp) && !fillable) { out.status = "MISSED"; out.tExit = t; break; }
+      // target reached in this candle: before any fill -> missed. If the entry is touched in the same candle we cannot
+      // tell which came first, so it is not counted as a trade (missed) - unless the stop is also hit (then: stopped)
+      const hitT = tp != null && (d === -1 ? lk <= tp : hk >= tp);
+      if (hitT && !(fillable && stop)) { out.status = "MISSED"; out.tExit = t; break; }
       if (stop && !fillable) { out.status = "INVALIDATED"; out.tExit = t; break; }
       if (touch && t >= tConf) { filled = true; out.status = "ENTERED"; out.tFill = t; }
     }

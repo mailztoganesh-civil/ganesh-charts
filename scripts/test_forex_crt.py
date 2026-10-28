@@ -125,7 +125,7 @@ class Sweep4H(unittest.TestCase):
     def test_parity_fixture(self):
         import make_sweep_fixture as M
         X = json.load(open(os.path.join(HERE, "..", "forex", "tests", "sweep_fixture.json")))
-        for e in X["evals"][::6] + X["evals"][-1:]:
+        for e in X["evals"]:                       # every point in time (JS checks all of them too)
             got = json.loads(json.dumps(M.scan_at(X["h1"], X["m15"], e["T"], X["m5"])))
             self.assertEqual(got, {k: v for k, v in e.items() if k != "T"}, f"T={e['T']}")
         for e in X["evals"]:                       # regression: no fill before the CHoCH / zone (look-ahead)
@@ -133,6 +133,66 @@ class Sweep4H(unittest.TestCase):
                 if r.get("tFill") is not None:
                     self.assertGreater(r["tFill"], r["choch"]["t"]); self.assertGreater(r["tFill"], r["zone"]["t"])
                     self.assertGreaterEqual(r["tFill"], r["sweep"]["t"] + 4 * 3600)
+
+
+class NoRepaint(unittest.TestCase):
+    """Look-ahead / repaint check: once a fact about a setup is known at time T1 (its CHoCH, zone, entry, stop,
+    target, fill time, final result), every later scan T2 > T1 must report exactly the same fact."""
+    def test_facts_never_change(self):
+        X = json.load(open(os.path.join(HERE, "..", "forex", "tests", "sweep_fixture.json")))
+        checked = 0
+        for key, sec in (("res", 4 * 3600), ("resD", 86400), ("res2H", 2 * 3600)):
+            seen = {}
+            for e in X["evals"]:
+                for r in e.get(key, []):
+                    k = (r["sweep"]["t"], r["dir"])
+                    if r["zone"]:            # zone (and levels) are known from the close of the candle after the CHoCH
+                        facts = {f: r.get(f) for f in ("choch", "zone", "entry", "sl", "tp", "disp")}
+                        if k in seen and "facts" in seen[k]:
+                            self.assertEqual(facts, seen[k]["facts"], f"{key} {k} CHoCH/zone changed after it was known"); checked += 1
+                        seen.setdefault(k, {})["facts"] = facts
+                    if r.get("tFill") is not None:
+                        if k in seen and "fill" in seen[k]:
+                            self.assertEqual(r["tFill"], seen[k]["fill"], f"{key} {k} fill time changed"); checked += 1
+                        seen.setdefault(k, {})["fill"] = r["tFill"]
+                        self.assertGreaterEqual(r["tFill"], r["sweep"]["t"] + sec, f"{key} {k} filled before the sweep candle closed")
+                    if r["status"] in ("TARGET_HIT", "STOPPED", "INVALIDATED", "MISSED", "EXPIRED"):
+                        if k in seen and "end" in seen[k]:
+                            self.assertEqual(r["status"], seen[k]["end"], f"{key} {k} final result changed"); checked += 1
+                        seen.setdefault(k, {})["end"] = r["status"]
+        self.assertGreater(checked, 50)
+
+
+class Candles(unittest.TestCase):
+    """New York anchoring through both daylight-saving switches (Feb-Nov 2025): the 4H / 2H / daily candles from
+    build() must equal candles made independently, bar by bar, with zoneinfo (4H blocks 01/05/09/13/17/21 NY,
+    2H blocks on odd NY hours, days from 17:00 NY). A candle is labelled with its first hourly bar (Yahoo's week
+    starts at 00:00 UTC, so Sunday candles read 19:00 or 20:00 NY)."""
+    def test_dst(self):
+        import pandas as pd
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+        P = json.load(open(os.path.join(HERE, "..", "forex", "tests", "parity_fixture.json")))
+        b = P["bars"]
+        h = pd.DataFrame([x[1:] for x in b], columns=["Open", "High", "Low", "Close"], index=pd.to_datetime([x[0] for x in b], unit="s", utc=True))
+        tfs = F.build(h); ny = ZoneInfo("America/New_York")
+        def local(t):
+            return datetime.fromtimestamp(t, timezone.utc).astimezone(ny).replace(tzinfo=None)
+        keys = {"4H": lambda L: (L - timedelta(hours=1)).replace(minute=0, hour=(L - timedelta(hours=1)).hour // 4 * 4),
+                "2H": lambda L: (L - timedelta(hours=1)).replace(minute=0, hour=(L - timedelta(hours=1)).hour // 2 * 2),
+                "D": lambda L: (L + timedelta(hours=7)).date()}
+        for tf, key in keys.items():
+            groups = {}
+            for t, o, hi, lo, c in b:
+                k = key(local(t)); g = groups.get(k)
+                groups[k] = [t, o, hi, lo, c] if g is None else [g[0], g[1], max(g[2], hi), min(g[3], lo), c]
+            mine = sorted(groups.values())
+            got = [[int(t.timestamp()), r.Open, r.High, r.Low, r.Close] for t, r in tfs[tf].iterrows()]
+            self.assertEqual(got, mine, tf)
+            if tf != "D":       # every candle starts inside its block, also across the DST switches
+                ok = {1, 5, 9, 13, 17, 21} if tf == "4H" else set(range(1, 24, 2))
+                starts = {(local(g[0]) - timedelta(hours=1)).hour // (4 if tf == "4H" else 2) * (4 if tf == "4H" else 2) + 1 for g in mine}
+                self.assertLessEqual(starts, ok, tf)
 
 
 if __name__ == "__main__":

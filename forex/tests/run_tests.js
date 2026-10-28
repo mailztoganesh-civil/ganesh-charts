@@ -150,5 +150,44 @@ check("[regression] phone engine loads 1 year of hourly data like the GitHub sca
   const early = X.evals.flatMap(e => e.res).filter(r => r.tFill != null && (r.tFill <= r.choch.t || r.tFill <= r.zone.t || r.tFill < r.sweep.t + 4 * 3600));
   check("[sweep] no fill before the CHoCH, the entry zone or the 4H close", early.length === 0, early.slice(0, 2));
 }
+// look-ahead / repaint: once known, a setup's CHoCH, zone, levels, fill time and final result never change later
+{
+  const SW = window.FXSweep, X = JSON.parse(fs.readFileSync(path.join(__dirname, "sweep_fixture.json"), "utf8"));
+  const seen = { res: new Map(), resD: new Map(), res2H: new Map() }, SEC = { res: 14400, resD: 86400, res2H: 7200 };
+  let changed = 0, checked = 0, early = 0;
+  for (const e of X.evals) {
+    const hh = X.h1.filter(b => b[0] <= e.T).map(b => ({ t: b[0], o: b[1], h: b[2], l: b[3], c: b[4] })), mm = X.m15.filter(b => b[0] <= e.T);
+    const B = F.build(hh), px = mm[mm.length - 1][4];
+    const got = { res: SW.scan(B["4H"], mm, X.pip, px, 14400), resD: SW.scan(B.D, B["1H"], X.pip, px, 86400) };
+    if (X.m5.length && X.m5[0][0] + 86400 <= e.T) got.res2H = SW.scan(B["2H"], X.m5.filter(b => b[0] <= e.T), X.pip, px, 7200);
+    for (const [key, list] of Object.entries(got)) for (const r of list) {
+      const k = r.sweep.t + "|" + r.dir, s = seen[key].get(k) || {};
+      if (r.zone) { const f = JSON.stringify([r.choch, r.zone, r.entry, r.sl, r.tp, r.disp]); if (s.f) { checked++; if (s.f !== f) changed++; } s.f = f; }
+      if (r.tFill != null) { if (s.fill) { checked++; if (s.fill !== r.tFill) changed++; } s.fill = r.tFill; if (r.tFill < r.sweep.t + SEC[key]) early++; }
+      if (["TARGET_HIT", "STOPPED", "INVALIDATED", "MISSED", "EXPIRED"].includes(r.status)) { if (s.end) { checked++; if (s.end !== r.status) changed++; } s.end = r.status; }
+      seen[key].set(k, s);
+    }
+  }
+  check(`[no repaint] ${checked} later re-checks of known CHoCH/zone/levels/fills/results: none changed`, changed === 0 && checked > 50, { changed, checked });
+  check("[no look-ahead] no fill before the higher-timeframe sweep candle closed (1D, 4H, 2H)", early === 0, { early });
+}
+// New York anchoring through both daylight-saving switches (parity fixture, Feb-Nov 2025): build() must equal
+// candles made independently bar by bar with Intl (4H blocks 01/05/.. NY, 2H odd hours, days from 17:00 NY)
+{
+  const P = JSON.parse(fs.readFileSync(path.join(__dirname, "parity_fixture.json"), "utf8"));
+  const B = F.build(P.bars.map(b => ({ t: b[0], o: b[1], h: b[2], l: b[3], c: b[4] })));
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" });
+  const parts = t => { const o = {}; fmt.formatToParts(new Date(t * 1000)).forEach(x => o[x.type] = x.value); return o; };
+  const shift = (t, hrs) => { const p = parts(t); const d = new Date(Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour)); d.setUTCHours(d.getUTCHours() + hrs); return d; };
+  const KEY = { "4H": t => { const d = shift(t, -1); return d.toISOString().slice(0, 11) + Math.floor(d.getUTCHours() / 4); },
+                "2H": t => { const d = shift(t, -1); return d.toISOString().slice(0, 11) + Math.floor(d.getUTCHours() / 2); },
+                D: t => shift(t, 7).toISOString().slice(0, 10) };
+  for (const [tf, key] of Object.entries(KEY)) {
+    const g = new Map();
+    for (const [t, o, h, l, c] of P.bars) { const k = key(t), x = g.get(k); g.set(k, x ? [x[0], x[1], Math.max(x[2], h), Math.min(x[3], l), c] : [t, o, h, l, c]); }
+    const mine = [...g.values()].sort((a, b) => a[0] - b[0]);
+    check(`[DST] ${tf} candles = independent New York bar-by-bar grouping (${mine.length} candles)`, eq(B[tf], mine), { n: B[tf].length, m: mine.length });
+  }
+}
 console.log(`JS: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

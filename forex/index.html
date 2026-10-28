@@ -78,8 +78,8 @@
   .sheet .hd h3 { margin:0; font-size:18px; flex:1; }
   .x { border:0; background:var(--tint); color:var(--ink); border-radius:10px; padding:7px 12px; font-weight:700; }
   .seg.two { grid-template-columns:1fr 1fr; }
-  .charts { display:grid; gap:10px; }
-  .charts.two { grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); }
+  .charts { display:grid; gap:10px; grid-template-columns:minmax(0,1fr); }   /* fixed track: a canvas's pixel size must not widen the grid on high-DPI phones */
+  .charts.two { grid-template-columns:repeat(auto-fit,minmax(min(330px,100%),1fr)); }
   .charts.two canvas { height:300px; }
   .cap { font-size:12px; font-weight:700; color:var(--sec); margin:0 2px 4px; }
   canvas { width:100%; height:340px; display:block; border-radius:10px; background:var(--card); touch-action:pan-y; }
@@ -107,6 +107,13 @@
   .exmenu button { border:0; background:var(--tint); color:var(--ink); border-radius:10px; padding:11px 12px; font-weight:700; font-size:14px; text-align:left; }
   .extoast { position:fixed; z-index:50; left:50%; transform:translateX(-50%); bottom:calc(env(safe-area-inset-bottom,0px) + 18px); background:var(--navy); color:#fff; padding:10px 16px; border-radius:999px; font-size:14px; font-weight:600; }
   .exx { margin-right:-2px; }
+  .sheet .hd { flex-wrap:wrap; row-gap:6px; }
+  .sheet .hd h3 { min-width:0; flex:1 1 170px; }
+  .sheet .panel > *, .charts > div { min-width:0; }
+  .sheet .panel { overflow-x:hidden; }
+  header h1 { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  header .upd { min-width:0; }
+  @media (max-width:440px) { header { gap:6px; } header h1 { font-size:17px; } header button { padding:8px 9px; } header .upd { font-size:11px; } }
   button { cursor:pointer; font-family:inherit; }
   button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
 </style>
@@ -245,11 +252,11 @@
     <div class="muted" id="swWhy"></div>
   </div>
 </div>
-<script src="sweep.js?v=19"></script>
-<script src="live.js?v=19"></script>
-<script src="app.js?v=19"></script>
-<script src="sweep-ui.js?v=19"></script>
-<script src="export.js?v=19"></script>
+<script src="sweep.js?v=20"></script>
+<script src="live.js?v=20"></script>
+<script src="app.js?v=20"></script>
+<script src="sweep-ui.js?v=20"></script>
+<script src="export.js?v=20"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

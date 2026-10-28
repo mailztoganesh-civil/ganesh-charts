@@ -89,7 +89,8 @@ def ltf_setup(sw, c4, m15, open_last=True, sec=H4):
     """Steps 5-8 on the 15m candles (oldest first). open_last = the last 15m candle is still forming."""
     d = sw["dir"]; j = sw["j"]
     t4 = c4[j][0]; tprev = c4[j - 1][0]
-    texp = c4[j + 1 + P["EXPIRY"]][0] if j + 1 + P["EXPIRY"] < len(c4) else t4 + (1 + P["EXPIRY"]) * sec
+    # expiry = when the EXPIRY-th candle after the sweep opens; until it exists, not expired (no calendar guess)
+    texp = c4[j + 1 + P["EXPIRY"]][0] if j + 1 + P["EXPIRY"] < len(c4) else math.inf
     n = len(m15); last_closed = n - 1 - (1 if open_last else 0)
     a = next((i for i, b in enumerate(m15) if b[0] >= tprev), -1)
     s = next((i for i, b in enumerate(m15) if b[0] >= t4), -1)
@@ -105,7 +106,7 @@ def ltf_setup(sw, c4, m15, open_last=True, sec=H4):
 
     def ref_before(X):
         for i in range(X - 1, a, -1):
-            if i + 1 <= X and is_ref(i):
+            if i + 1 <= min(X, last_closed) and is_ref(i):     # the confirming candle must be closed
                 return i
         return -1
     X = s; ref = ref_before(s); b = -1
@@ -132,10 +133,19 @@ def ltf_setup(sw, c4, m15, open_last=True, sec=H4):
             body = bd; disp_k = k
     out["choch"] = {"t": m15[b][0], "level": L(ref) if d == -1 else H(ref), "refT": m15[ref][0], "k": b}
     out["disp"] = body / a15; out["dispT"] = m15[disp_k][0]; out["atr15"] = a15
+    if b + 1 > last_closed:                     # zone chosen only once candle b+1 closed: it never changes later
+        out["status"] = "CHOCH"; return out
+    # a 3-candle gap only counts when the 3 candles are back to back (a missing candle or the weekend is not an FVG)
+    step = math.inf
+    for k in range(a + 1, n):
+        dt = m15[k][0] - m15[k - 1][0]
+        if 0 < dt < step:
+            step = dt
+    together = lambda m: m15[m][0] - m15[m - 1][0] == step and m15[m + 1][0] - m15[m][0] == step
     best = None
     for m in range(X + 1, min(b + 1, last_closed)):        # m + 1 <= min(b + 1, last_closed)
         lo = H(m + 1) if d == -1 else H(m - 1); hi = L(m - 1) if d == -1 else L(m + 1)
-        if hi - lo >= P["FVG_MIN"] * a15:
+        if hi - lo >= P["FVG_MIN"] * a15 and together(m):
             bd = abs(C(m) - O(m))
             if best is None or bd >= best["bd"]:
                 best = {"type": "FVG", "lo": lo, "hi": hi, "t": m15[m - 1][0], "from": m + 1, "bd": bd}
@@ -168,7 +178,8 @@ def ltf_setup(sw, c4, m15, open_last=True, sec=H4):
             touch = (hk >= entry) if d == -1 else (lk <= entry)
             stop = (hk > sl) if d == -1 else (lk < sl)
             fillable = touch and t >= tconf
-            if tp is not None and ((lk <= tp) if d == -1 else (hk >= tp)) and not fillable:
+            hit_t = tp is not None and ((lk <= tp) if d == -1 else (hk >= tp))
+            if hit_t and not (fillable and stop):          # target first, or same candle as the fill: not a trade
                 out["status"] = "MISSED"; out["tExit"] = t; break
             if stop and not fillable:
                 out["status"] = "INVALIDATED"; out["tExit"] = t; break

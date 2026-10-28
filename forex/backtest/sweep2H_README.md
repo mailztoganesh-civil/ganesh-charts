@@ -7,41 +7,44 @@ Pairs: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, USDJPY, XAUUSD. forex-dat
 | Step | Count |
 |---|---|
 | sweeps (closed back inside) | 3103 |
-| with 15m CHoCH | 2998 |
-| orders placed | 2996 |
-| filled | 2354 |
-| cancelled: invalidated | 41 |
-| cancelled: missed | 134 |
-| cancelled: expired | 467 |
+| with lower-timeframe CHoCH | 2998 |
+| orders placed | 2997 |
+| filled | 2390 |
+| cancelled: invalidated | 51 |
+| cancelled: missed | 115 |
+| cancelled: expired | 438 |
+| cancelled: fill and target in one bar | 3 |
 
 ## Results
 
 | Variant | Train | Validation | Test | Win % (all) |
 |---|---|---|---|---|
-| all setups (rules as in the app) | -0.003 (903) | -0.051 (617) | +0.042 (834) | 17% |
-| grade A or B | -0.015 (844) | -0.013 (570) | +0.047 (776) | 17% |
-| grade A | +0.035 (561) | +0.057 (396) | +0.039 (521) | 18% |
-| 4H swing >= 1.5 ATR | +0.021 (824) | -0.027 (563) | +0.036 (761) | 17% |
-| sweep 0.1-1.0 ATR | -0.006 (574) | +0.011 (417) | +0.057 (524) | 18% |
-| displacement >= 1.5 ATR | -0.048 (353) | -0.046 (228) | +0.137 (342) | 20% |
-| FVG zone only | +0.036 (773) | +0.045 (517) | -0.066 (709) | 18% |
-| R:R >= 2 | -0.016 (852) | -0.056 (586) | +0.049 (789) | 15% |
-| entry in discount / premium (TTrades) | -0.038 (186) | -0.122 (121) | +0.322 (198) | 11% |
-| TTrades checklist 5/5 | -0.033 (185) | -0.128 (119) | +0.322 (198) | 11% |
-| A1 = grade A + TTrades checklist 5/5 | +0.673 (92) | +0.294 (62) | +0.094 (110) | 14% |
-| app default filters (sweep >= 0.05, displacement >= 1.0, swing >= 1.0) | -0.048 (559) | -0.023 (402) | +0.023 (525) | 19% |
+| all setups (rules as in the app) | +0.192 (916) | +0.052 (630) | +0.139 (844) | 18% |
+| grade A or B | +0.183 (854) | +0.077 (582) | +0.151 (786) | 19% |
+| grade A | +0.260 (562) | +0.189 (404) | +0.127 (527) | 20% |
+| grade B | +0.034 (292) | -0.179 (178) | +0.198 (259) | 16% |
+| grade C | +0.319 (62) | -0.246 (48) | -0.016 (58) | 14% |
+| 4H swing >= 1.5 ATR | +0.238 (837) | +0.066 (574) | +0.142 (771) | 19% |
+| sweep 0.1-1.0 ATR | +0.283 (584) | +0.168 (425) | +0.131 (528) | 20% |
+| displacement >= 1.5 ATR | +0.035 (358) | +0.016 (233) | +0.216 (344) | 22% |
+| FVG zone only | +0.173 (770) | +0.142 (529) | +0.044 (718) | 19% |
+| R:R >= 2 | +0.188 (864) | +0.052 (599) | +0.145 (801) | 17% |
+| entry in discount / premium (TTrades) | +0.328 (200) | -0.124 (122) | +0.318 (202) | 12% |
+| TTrades checklist 5/5 | +0.335 (199) | -0.129 (120) | +0.318 (202) | 12% |
+| A1 = grade A + TTrades checklist 5/5 | +1.237 (94) | +0.328 (61) | +0.095 (110) | 15% |
+| app default filters (sweep >= 0.05, displacement >= 1.0, swing >= 1.0) | +0.148 (571) | +0.115 (412) | +0.112 (533) | 21% |
 
 ## Per pair (all setups, whole period)
 
 | Pair | Trades | Win | Avg R | PF | Sum R | Max DD |
 |---|---|---|---|---|---|---|
-| EURUSD | 298 | 16.8% | -0.118 ± 0.145 | 0.86 | -35.2 | 81.4 |
-| GBPUSD | 279 | 15.1% | -0.065 ± 0.174 | 0.93 | -18.2 | 91.1 |
-| AUDUSD | 291 | 16.2% | -0.108 ± 0.165 | 0.88 | -31.3 | 63.2 |
-| NZDUSD | 325 | 18.5% | +0.121 ± 0.178 | 1.14 | +39.3 | 42.6 |
-| USDCAD | 292 | 17.5% | -0.002 ± 0.173 | 1.0 | -0.6 | 70.9 |
-| USDCHF | 333 | 17.1% | +0.090 ± 0.216 | 1.1 | +29.8 | 67.1 |
-| USDJPY | 277 | 16.6% | -0.050 ± 0.195 | 0.94 | -13.9 | 64.3 |
-| XAUUSD | 259 | 19.3% | +0.118 ± 0.243 | 1.14 | +30.6 | 38.5 |
+| EURUSD | 299 | 17.1% | -0.062 ± 0.154 | 0.93 | -18.6 | 80.8 |
+| GBPUSD | 286 | 18.2% | +0.165 ± 0.196 | 1.2 | +47.2 | 49.0 |
+| AUDUSD | 295 | 16.9% | +0.059 ± 0.186 | 1.07 | +17.4 | 49.8 |
+| NZDUSD | 333 | 20.4% | +0.289 ± 0.191 | 1.34 | +96.1 | 31.0 |
+| USDCAD | 297 | 18.5% | +0.116 ± 0.183 | 1.14 | +34.5 | 44.5 |
+| USDCHF | 337 | 18.4% | +0.155 ± 0.222 | 1.18 | +52.4 | 62.5 |
+| USDJPY | 283 | 18.0% | +0.066 ± 0.2 | 1.08 | +18.6 | 50.1 |
+| XAUUSD | 260 | 19.6% | +0.303 ± 0.269 | 1.37 | +78.8 | 30.8 |
 
 Not tested here: the CRT-confluence filter (it needs the CRT state at each moment), news, swaps.

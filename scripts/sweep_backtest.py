@@ -4,6 +4,8 @@ the same swings, sweeps, 15m CHoCH, FVG/OB zone, entry, stop and target the app 
 Execution (decided before looking at results; nothing is fitted):
   entry   limit order at the zone's near edge, placed when the CHoCH candle has closed (and the zone exists); it can
           only fill once the 4H sweep candle has closed back inside (before that the sweep is not confirmed).
+          The zone is known (and the order placed) when the lower-timeframe candle after the CHoCH has closed.
+          If the entry and the target are touched in the same 5-minute bar, the order is unknown: no trade.
           Long fills when the ask reaches it (mid low <= entry - half spread); fill price = entry.
   stop    the sweep extreme. Triggered at the bid/ask (mid +/- half spread); fill = stop minus slippage.
   target  the opposite liquidity (limit, filled at the level once the bid/ask reaches it).
@@ -40,6 +42,8 @@ def lists(df):
 TF = "4H"
 SEC = {"D": 86400, "4H": 4 * 3600, "2H": 2 * 3600}
 LTF = {"D": "1h", "4H": "15min", "2H": "5min"}
+LTF_SEC = {"D": 3600, "4H": 900, "2H": 300}
+DELAY = int(os.environ.get("ICT_DELAY_BARS", "0"))   # sensitivity check only: place the order this many LTF candles later
 PFX = lambda: "sweep" if TF == "4H" else "sweep" + TF
 
 
@@ -51,10 +55,13 @@ def setups(c4, m15):
         if not sw or sw["code"] != "SWEEP":
             continue
         a = bisect.bisect_left(t15, c4[j - 1][0])
-        texp = c4[j + 1 + S.P["EXPIRY"]][0] if j + 1 + S.P["EXPIRY"] < len(c4) else c4[j][0] + (1 + S.P["EXPIRY"]) * SEC[TF]
-        e = bisect.bisect_left(t15, texp)                         # nothing after the expiry is needed to find the zone
-        x = S.ltf_setup(sw, c4, m15[a:e], open_last=False, sec=SEC[TF])
-        out.append({"sw": sw, "x": x, "q": S.quality(sw, x), "texp": texp, "tconf": c4[j + 1][0]})
+        texp = c4[j + 1 + S.P["EXPIRY"]][0] if j + 1 + S.P["EXPIRY"] < len(c4) else 4e9   # same rule as the app
+        e = bisect.bisect_left(t15, texp) + 1                     # up to the first candle at the expiry (the zone needs the candle after the CHoCH)
+        sl_ = m15[a:e]
+        x = S.ltf_setup(sw, c4, sl_, open_last=False, sec=SEC[TF])
+        # the zone is known when the candle after the CHoCH has closed (engine rule); orders go in only then
+        t_zone = sl_[x["choch"]["k"] + 1][0] + LTF_SEC[TF] if x.get("zone") else None
+        out.append({"sw": sw, "x": x, "q": S.quality(sw, x), "texp": texp, "tconf": c4[j + 1][0], "tzone": t_zone})
     return out
 
 
@@ -69,7 +76,7 @@ def simulate(s, m5, pair):
     risk = abs(entry - sl)
     if risk <= 0 or (tp - entry) * d <= 0:
         return {"placed": False}
-    t_place = max(x["choch"]["t"] + 15 * 60, x["zone"]["t"] + 3 * 15 * 60)    # after the CHoCH candle (and the FVG) closed
+    t_place = s["tzone"] + DELAY * LTF_SEC[TF]           # after the candle following the CHoCH closed (zone known)
     a = int(np.searchsorted(T, t_place, "left")); e = int(np.searchsorted(T, s["texp"], "left"))
     fill = None
     for k in range(a, min(e, len(T))):
@@ -78,6 +85,8 @@ def simulate(s, m5, pair):
         stop = (lo + hs <= sl) if d == 1 else (hi - hs >= sl)
         tgt = (hi - hs >= tp) if d == 1 else (lo + hs <= tp)
         if touch and T[k] >= s["tconf"]:                       # no fill before the 4H sweep candle closed back inside
+            if tgt and not stop:                                # entry and target in the same 5m bar: order unknown -> no trade
+                return {"placed": True, "filled": False, "why": "fill and target in one bar"}
             fill = k; break
         if stop:
             return {"placed": True, "filled": False, "why": "invalidated"}
@@ -101,6 +110,8 @@ VARIANTS = [
     ("all setups (rules as in the app)", lambda s: True),
     ("grade A or B", lambda s: s["q"]["grade"] in ("A", "B")),
     ("grade A", lambda s: s["q"]["grade"] == "A"),
+    ("grade B", lambda s: s["q"]["grade"] == "B"),
+    ("grade C", lambda s: s["q"]["grade"] == "C"),
     ("4H swing >= 1.5 ATR", lambda s: s["q"]["checks"]["swing"]),
     ("sweep 0.1-1.0 ATR", lambda s: s["q"]["checks"]["depth"]),
     ("displacement >= 1.5 ATR", lambda s: s["q"]["checks"]["disp"]),
@@ -122,10 +133,10 @@ def run(root, pair):
     su = setups(c4, m15)
     for s in su:
         s["r"] = simulate(s, m5, pair)
-    funnel = {"sweeps (closed back inside)": len(su), "with 15m CHoCH": sum(1 for s in su if s["x"].get("choch")),
+    funnel = {"sweeps (closed back inside)": len(su), "with lower-timeframe CHoCH": sum(1 for s in su if s["x"].get("choch")),
               "orders placed": sum(1 for s in su if s["r"] and s["r"].get("placed")),
               "filled": sum(1 for s in su if s["r"] and s["r"].get("filled"))}
-    for why in ("invalidated", "missed", "expired"):
+    for why in ("invalidated", "missed", "expired", "fill and target in one bar"):
         funnel["cancelled: " + why] = sum(1 for s in su if s["r"] and s["r"].get("why") == why)
     trades = sorted([s for s in su if s["r"] and s["r"].get("filled")], key=lambda s: s["r"]["t"])
     for s in trades:
@@ -135,6 +146,7 @@ def run(root, pair):
     res = {"pair": pair, "data": [str(m5df.index[0]), str(m5df.index[-1])], "cost_pips": B.COST[pair], "funnel": funnel, "variants": {}, "sessions": {},
            "exits": {k: sum(1 for s in trades if s["r"]["how"] == k) for k in ("target", "stop", "time")},
            "same_bar_stop_and_target": sum(1 for s in trades if s["r"]["both"])}
+    res["trades"] = [[s["r"]["t"], round(s["r"]["R"], 4), s["q"]["grade"], s["q"]["ttN"], s["split"], s["session"]] for s in trades]
     for name, f in VARIANTS:
         sel = [s for s in trades if f(s)]
         res["variants"][name] = {sp: B.stats([s["r"]["R"] for s in sel if s["split"] == sp]) for sp, _, _ in B.SPLITS}

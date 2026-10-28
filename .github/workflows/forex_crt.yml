@@ -12,6 +12,7 @@ on:
       - "scripts/sweep4h.py"
       - "scripts/make_sweep_fixture.py"
       - "forex/sweep.js"
+      - "scripts/sweep_replay_check.py"
       - "forex/live.js"
       - "forex/tests/**"
   schedule:
