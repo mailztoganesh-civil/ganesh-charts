@@ -204,8 +204,8 @@
     </section>
     <section class="card legend">
       <b>How a setup is found</b> (same rules on the phone and in the GitHub scan). The same rules run on three pairs of timeframes: <b>1D sweep → 1H CHoCH</b>, <b>4H sweep → 15m CHoCH</b> and <b>2H sweep → 5m CHoCH</b>. Below, “4H” and “15m” stand for whichever pair you picked; ATR, candle counts (60 back, 12 recent, 6 to expire) are in that timeframe's candles.<br>
-      <b>1. 4H swing</b> – a 4H candle whose high is above the 2 candles before it and not below the 2 after it (lows mirrored); known once those 2 candles closed. Size = swing high minus the lowest low of those 5 candles, in 4H ATR(14).<br>
-      <b>2. Sweep</b> – a 4H candle trades beyond an untouched swing from the last 60 4H candles (equal = touch, not a sweep). If it takes several, the furthest counts; taking a high and a low together is skipped as ambiguous. Strength = distance beyond the level in 4H ATR.<br>
+      <b>1. 4H swing</b> – an obvious (external) high: above the highs of the 10 candles before it and not below the 2 after it (lows mirrored); known once those 2 candles closed. Small pivots inside a range are not liquidity. Size = swing high minus the lowest low of those 5 candles, in 4H ATR(14).<br>
+      <b>2. Sweep</b> – a 4H candle that opened inside the level wicks beyond an untouched swing that is at least 5 candles old, from the last 60 4H candles (equal = touch, not a sweep). If it takes several, the furthest counts; taking a high and a low together is skipped as ambiguous. Strength = distance beyond the level in 4H ATR.<br>
       <b>3. Back into range</b> – the sweep candle must close back inside the level. While it is still open the setup is only <i>Sweeping</i>; closing beyond is a break, not a sweep.<br>
       <b>4. Target</b> – the nearest untouched 4H swing on the other side (opposite liquidity), else the 20-candle extreme.<br>
       <b>5. 15m CHoCH</b> – after price went beyond the 4H level, the first 15m candle that closes through the last 15m swing low (bearish) / swing high (bullish) made before the sweep extreme.<br>
@@ -245,11 +245,11 @@
     <div class="muted" id="swWhy"></div>
   </div>
 </div>
-<script src="sweep.js?v=18"></script>
-<script src="live.js?v=18"></script>
-<script src="app.js?v=18"></script>
-<script src="sweep-ui.js?v=18"></script>
-<script src="export.js?v=18"></script>
+<script src="sweep.js?v=19"></script>
+<script src="live.js?v=19"></script>
+<script src="app.js?v=19"></script>
+<script src="sweep-ui.js?v=19"></script>
+<script src="export.js?v=19"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

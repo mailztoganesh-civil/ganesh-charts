@@ -5,10 +5,12 @@
  * dir: +1 = bullish setup (a 4H swing LOW was swept, look for longs), -1 = bearish (a swing HIGH was swept).
  *
  * The rules, step by step (every number below is in P and can be changed in one place):
- *  1. 4H swing: candle i is a swing high when its high is above the highs of the K=2 candles before it and not
+ *  1. 4H swing: candle i is a swing high when its high is above the highs of the LEFT=10 candles before it (an external,
+ *     obvious high - not an internal pivot) and not
  *     below the highs of the K=2 candles after it (lows mirrored). It is only known once those 2 candles have
  *     closed. Swing size = (swing high - lowest low of the 5-candle window) / ATR(14) of the 4H candles.
- *  2. 4H sweep: candle j trades beyond an untouched swing (no candle since the swing went past it; equal is a
+ *  2. 4H sweep: candle j opens inside and wicks beyond an untouched swing at least MIN_AGE=5 candles old (no candle since
+ *     the swing went past it; equal is a
  *     touch, not a sweep) from the last LOOK=60 4H candles (about 10 trading days). If it takes several swings,
  *     the furthest one counts. If one candle takes a swing high AND a swing low it is ambiguous and skipped.
  *  3. Return into range: the 4H sweep candle must CLOSE back on the inside of the swing level. Closing beyond it
@@ -31,7 +33,7 @@
  */
 (() => {
 "use strict";
-const P = { K: 2, LOOK: 60, ATR_N: 14, RECENT: 12, EXPIRY: 6, FVG_MIN: 0.1, TARGET_BACK: 20 };
+const P = { K: 2, LEFT: 10, MIN_AGE: 5, LOOK: 60, ATR_N: 14, RECENT: 12, EXPIRY: 6, FVG_MIN: 0.1, TARGET_BACK: 20 };
 const H4 = 4 * 3600;
 
 /* Average true range of the n candles ending at i (true range uses the previous close). */
@@ -49,7 +51,7 @@ function swings(cs, upto, from) {
   const out = [], K = P.K;
   for (let i = Math.max(K, from || 0); i <= upto - K; i++) {
     let hiL = -Infinity, hiR = -Infinity, loL = Infinity, loR = Infinity, wLo = Infinity, wHi = -Infinity;
-    for (let k = i - K; k < i; k++) { hiL = Math.max(hiL, cs[k][2]); loL = Math.min(loL, cs[k][3]); }
+    for (let k = Math.max(0, i - P.LEFT); k < i; k++) { hiL = Math.max(hiL, cs[k][2]); loL = Math.min(loL, cs[k][3]); }   // external: beyond the LEFT candles before it
     for (let k = i + 1; k <= i + K; k++) { hiR = Math.max(hiR, cs[k][2]); loR = Math.min(loR, cs[k][3]); }
     for (let k = i - K; k <= i + K; k++) { wLo = Math.min(wLo, cs[k][3]); wHi = Math.max(wHi, cs[k][2]); }
     const a = atr(cs, i, P.ATR_N) || 1e-12;
@@ -63,13 +65,16 @@ function swings(cs, upto, from) {
 function sweepAt(cs, j, live) {
   if (j < P.K * 2 + 2) return null;
   const sw = swings(cs, j - 1, j - P.LOOK).filter(s => s.conf <= j - 1 && s.i >= j - P.LOOK);
+  const old = s => s.i <= j - P.MIN_AGE;     // liquidity needs time to build: the swing is at least MIN_AGE candles old
   const untouched = s => { for (let k = s.i + 1; k < j; k++) if (s.side === 1 ? cs[k][2] > s.price : cs[k][3] < s.price) return false; return true; };
-  const [, , h, l, c] = cs[j];
+  const [, o, h, l, c] = cs[j];
   let hi = null, lo = null;
   for (const s of sw) {
     if (!untouched(s)) continue;
-    if (s.side === 1 && h > s.price && (!hi || s.price > hi.price)) hi = s;
-    if (s.side === -1 && l < s.price && (!lo || s.price < lo.price)) lo = s;
+    if (!old(s)) continue;
+    // wick sweep: the candle opened inside the level and only traded through it
+    if (s.side === 1 && h > s.price && o < s.price && (!hi || s.price > hi.price)) hi = s;
+    if (s.side === -1 && l < s.price && o > s.price && (!lo || s.price < lo.price)) lo = s;
   }
   if (!hi && !lo) return null;
   if (hi && lo) return { code: "AMBIGUOUS", j, t: cs[j][0] };

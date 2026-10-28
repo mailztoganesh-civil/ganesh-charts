@@ -7,7 +7,7 @@ dir: +1 = bullish setup (a 4H swing low was swept), -1 = bearish (a 4H swing hig
 """
 import math
 
-P = {"K": 2, "LOOK": 60, "ATR_N": 14, "RECENT": 12, "EXPIRY": 6, "FVG_MIN": 0.1, "TARGET_BACK": 20}
+P = {"K": 2, "LEFT": 10, "MIN_AGE": 5, "LOOK": 60, "ATR_N": 14, "RECENT": 12, "EXPIRY": 6, "FVG_MIN": 0.1, "TARGET_BACK": 20}
 H4 = 4 * 3600
 
 
@@ -24,7 +24,8 @@ def swings(cs, upto, frm=0):
     """Confirmed 4H swings using candles 0..upto only (a swing at i needs candles i+1..i+K)."""
     out = []; K = P["K"]
     for i in range(max(K, frm or 0), upto - K + 1):
-        hiL = max(cs[k][2] for k in range(i - K, i)); loL = min(cs[k][3] for k in range(i - K, i))
+        lft = range(max(0, i - P["LEFT"]), i)        # external swing: beyond the LEFT candles before it
+        hiL = max(cs[k][2] for k in lft); loL = min(cs[k][3] for k in lft)
         hiR = max(cs[k][2] for k in range(i + 1, i + K + 1)); loR = min(cs[k][3] for k in range(i + 1, i + K + 1))
         wLo = min(cs[k][3] for k in range(i - K, i + K + 1)); wHi = max(cs[k][2] for k in range(i - K, i + K + 1))
         a = atr(cs, i, P["ATR_N"]) or 1e-12
@@ -46,14 +47,14 @@ def sweep_at(cs, j, live=False):
             if (cs[k][2] > s["price"]) if s["side"] == 1 else (cs[k][3] < s["price"]):
                 return False
         return True
-    _, _, h, l, c = cs[j]
+    _, o, h, l, c = cs[j]
     hi = lo = None
     for s in sw:
-        if not untouched(s):
+        if not untouched(s) or s["i"] > j - P["MIN_AGE"]:      # swing at least MIN_AGE candles old
             continue
-        if s["side"] == 1 and h > s["price"] and (hi is None or s["price"] > hi["price"]):
+        if s["side"] == 1 and h > s["price"] and o < s["price"] and (hi is None or s["price"] > hi["price"]):
             hi = s
-        if s["side"] == -1 and l < s["price"] and (lo is None or s["price"] < lo["price"]):
+        if s["side"] == -1 and l < s["price"] and o > s["price"] and (lo is None or s["price"] < lo["price"]):
             lo = s
     if hi is None and lo is None:
         return None
