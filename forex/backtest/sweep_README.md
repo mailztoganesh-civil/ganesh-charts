@@ -1,12 +1,12 @@
-# ICT 4H Sweep backtest – summary
+# ICT 4H Sweep backtest – summary (CHoCH on 15m)
 
-Pairs: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, USDJPY, XAUUSD. forex-data 5-minute bars from 2023-01-01; costs per pair as in the CRT backtest. Made by `python scripts/sweep_backtest.py <forex-data> EURUSD GBPUSD AUDUSD NZDUSD USDCAD USDCHF USDJPY XAUUSD`; execution rules in that script's header. Average R per filled trade, all pairs pooled; trades in brackets. No threshold was tuned.
+Pairs: EURUSD, GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, USDJPY, XAUUSD. forex-data 5-minute bars from 2023-01-01; costs per pair as in the CRT backtest. Made by `python scripts/sweep_backtest.py <forex-data> --tf 4H EURUSD GBPUSD AUDUSD NZDUSD USDCAD USDCHF USDJPY XAUUSD`; execution rules in that script's header. Average R per filled trade, all pairs pooled; trades in brackets. No threshold was tuned.
 
 ## Funnel (all pairs)
 
 | Step | Count |
 |---|---|
-| 4H sweeps (closed back inside) | 4399 |
+| sweeps (closed back inside) | 4399 |
 | with 15m CHoCH | 4146 |
 | orders placed | 4135 |
 | filled | 3310 |

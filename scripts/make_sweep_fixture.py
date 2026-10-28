@@ -16,6 +16,7 @@ import sweep4h as S    # noqa: E402
 OUT = os.path.join(HERE, "..", "forex", "tests", "sweep_fixture.json")
 START, END = "2025-02-03", "2025-05-17"     # covers the US daylight-saving switch (9 Mar 2025)
 EVAL_DAYS, EVAL_STEP_H = 70, 7
+M5_DAYS = 21
 PIP = 0.0001
 AGG = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
 
@@ -30,11 +31,17 @@ def view(h1, m15, T):
     return hh, mm
 
 
-def scan_at(h1, m15, T):
+def scan_at(h1, m15, T, m5=None):
+    """Sweep results at time T: 4H (15m CHoCH), Daily (1H CHoCH) and, when 5m bars cover T, 2H (5m CHoCH)."""
     hh, mm = view(h1, m15, T)
     df = pd.DataFrame([b[1:] for b in hh], columns=["Open", "High", "Low", "Close"], index=pd.to_datetime([b[0] for b in hh], unit="s", utc=True))
-    c4 = [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in F.build(df)["4H"].iterrows()]
-    return S.scan(c4, mm, PIP, mm[-1][4])
+    tfs = F.build(df)
+    L = lambda x: [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in x.iterrows()]
+    out = {"res": S.scan(L(tfs["4H"]), mm, PIP, mm[-1][4], 4 * 3600), "resD": S.scan(L(tfs["D"]), L(tfs["1H"]), PIP, mm[-1][4], 86400)}
+    if m5 and m5[0][0] + 86400 <= T:
+        m = [b for b in m5 if b[0] <= T]
+        out["res2H"] = S.scan(L(tfs["2H"]), m, PIP, mm[-1][4], 2 * 3600)
+    return out
 
 
 def main(root):
@@ -44,13 +51,14 @@ def main(root):
     d = F.clean_df(d); d = d[(d.index >= START) & (d.index < END)]
     h1 = bars(d.resample("1h", label="left", closed="left").agg(AGG).dropna())
     m15 = bars(d.resample("15min", label="left", closed="left").agg(AGG).dropna())
+    m5 = bars(d[d.index >= d.index[-1] - pd.Timedelta(days=M5_DAYS)])          # 5m only for the last weeks (file size)
     t_end = m15[-1][0]; first = t_end - EVAL_DAYS * 86400
     times = list(range(first, t_end + 1, EVAL_STEP_H * 3600)) + [t_end]
-    evals = [{"T": T, "res": scan_at(h1, m15, T)} for T in times]
-    json.dump({"pair": "EURUSD", "pip": PIP, "window": [START, END], "h1": h1, "m15": m15, "evals": evals},
+    evals = [dict({"T": T}, **scan_at(h1, m15, T, m5)) for T in times]
+    json.dump({"pair": "EURUSD", "pip": PIP, "window": [START, END], "h1": h1, "m15": m15, "m5": m5, "evals": evals},
               open(OUT, "w"), separators=(",", ":"))
-    n = sum(len(e["res"]) for e in evals)
-    print("wrote", OUT, len(evals), "points in time,", n, "setups,", os.path.getsize(OUT), "bytes")
+    n = {k: sum(len(e.get(k, [])) for e in evals) for k in ("res", "resD", "res2H")}
+    print("wrote", OUT, len(evals), "points in time, setups", n, os.path.getsize(OUT), "bytes")
 
 
 if __name__ == "__main__":

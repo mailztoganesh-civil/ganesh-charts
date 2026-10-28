@@ -81,7 +81,7 @@ function sweepAt(cs, j, live) {
     if (o.side !== -s.side) continue;
     let ok = true; for (let k = o.i + 1; k <= j; k++) if (o.side === 1 ? cs[k][2] > o.price : cs[k][3] < o.price) { ok = false; break; }
     if (!ok || (d === -1 ? o.price >= c : o.price <= c)) continue;
-    if (target === null || (d === -1 ? o.price > target : o.price < target)) { target = o.price; tLabel = d === -1 ? "4H swing low" : "4H swing high"; }
+    if (target === null || (d === -1 ? o.price > target : o.price < target)) { target = o.price; tLabel = d === -1 ? "swing low" : "swing high"; }
   }
   if (target === null) {
     const back20 = cs.slice(Math.max(0, j - P.TARGET_BACK), j), x = d === -1 ? Math.min(...back20.map(q => q[3])) : Math.max(...back20.map(q => q[2]));
@@ -93,10 +93,11 @@ function sweepAt(cs, j, live) {
 }
 
 /* Steps 5-8 on the 15m candles m15 (oldest first). openLast = the last 15m candle is still forming. */
-function ltfSetup(sw, c4, m15, openLast) {
+function ltfSetup(sw, c4, m15, openLast, sec) {
+  sec = sec || H4;                 // length of one higher-timeframe candle (4H default; 1D and 2H use the same rules)
   const d = sw.dir, j = sw.j;
   const t4 = c4[j][0], tPrev = c4[j - 1][0];
-  const tExp = j + 1 + P.EXPIRY < c4.length ? c4[j + 1 + P.EXPIRY][0] : t4 + (1 + P.EXPIRY) * H4;
+  const tExp = j + 1 + P.EXPIRY < c4.length ? c4[j + 1 + P.EXPIRY][0] : t4 + (1 + P.EXPIRY) * sec;
   const n = m15.length, lastClosed = n - 1 - (openLast ? 1 : 0);
   const a = m15.findIndex(b => b[0] >= tPrev), s = m15.findIndex(b => b[0] >= t4);
   const out = { status: "SWEEP", choch: null, zone: null };
@@ -146,7 +147,7 @@ function ltfSetup(sw, c4, m15, openLast) {
   // step 8: walk forward from the candle after the zone exists (the open candle counts: a touch is a touch)
   out.status = "ENTRY_READY";
   // the sweep is only confirmed when the 4H candle has closed back inside: no fill before that
-  const tConf = j + 1 < c4.length ? c4[j + 1][0] : t4 + H4;
+  const tConf = j + 1 < c4.length ? c4[j + 1][0] : t4 + sec;
   let filled = false;
   // the zone is only usable once the CHoCH has closed (an FVG can be older than the CHoCH): start after both
   for (let k = Math.max(best.from, b) + 1; k < n; k++) {
@@ -180,12 +181,12 @@ function quality(sw, x) {
 
 /* Everything for one symbol: 4H sweeps of the last RECENT 4H candles (newest first), each with its 15m setup.
  * c4 last candle and m15 last candle are the ones still forming. */
-function scan(c4, m15, pip, price) {
+function scan(c4, m15, pip, price, sec) {
   const n = c4.length, res = [];
   for (let j = n - 1; j >= Math.max(1, n - P.RECENT); j--) {
     const sw = sweepAt(c4, j, j === n - 1);
     if (!sw || sw.code === "AMBIGUOUS" || sw.code === "BREAK") continue;
-    const x = m15 && m15.length ? ltfSetup(sw, c4, m15, true) : { status: "NO_LTF" };
+    const x = m15 && m15.length ? ltfSetup(sw, c4, m15, true, sec) : { status: "NO_LTF" };
     const status = sw.live ? "SWEEPING" : x.status;
     const q = quality(sw, x);
     const dist = x.entry != null && price != null ? Math.abs(price - x.entry) / pip : null;

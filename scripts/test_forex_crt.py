@@ -126,9 +126,10 @@ class Sweep4H(unittest.TestCase):
         import make_sweep_fixture as M
         X = json.load(open(os.path.join(HERE, "..", "forex", "tests", "sweep_fixture.json")))
         for e in X["evals"][::6] + X["evals"][-1:]:
-            self.assertEqual(json.loads(json.dumps(M.scan_at(X["h1"], X["m15"], e["T"]))), e["res"], f"T={e['T']}")
+            got = json.loads(json.dumps(M.scan_at(X["h1"], X["m15"], e["T"], X["m5"])))
+            self.assertEqual(got, {k: v for k, v in e.items() if k != "T"}, f"T={e['T']}")
         for e in X["evals"]:                       # regression: no fill before the CHoCH / zone (look-ahead)
-            for r in e["res"]:
+            for r in e["res"]:            # 4H: no fill before the 4H close
                 if r.get("tFill") is not None:
                     self.assertGreater(r["tFill"], r["choch"]["t"]); self.assertGreater(r["tFill"], r["zone"]["t"])
                     self.assertGreaterEqual(r["tFill"], r["sweep"]["t"] + 4 * 3600)

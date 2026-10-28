@@ -9,11 +9,13 @@ Execution (decided before looking at results; nothing is fitted):
   target  the opposite liquidity (limit, filled at the level once the bid/ask reaches it).
   expiry  no fill within 6 4H candles after the sweep candle closed -> cancelled (the app's EXPIRED).
           Before a fill: price beyond the stop -> cancelled; target reached first -> cancelled (missed).
-  hold    at most 5 days after the fill, then closed at the market (minus half spread and slippage).
+  hold    at most 20 days (1D) / 5 days (4H) / 3 days (2H) after the fill, then closed at the market (minus half spread and slippage).
   same 5-minute bar touches stop and target -> stop first. R = result / planned risk (entry to stop).
 Costs per pair as in scripts/crt_backtest.py. Periods: train 2023-01..2024-06, validation 2024-07..2025-06, test 2025-07+.
 
-Usage: python scripts/sweep_backtest.py <forex-data checkout> [PAIR ...]   -> forex/backtest/sweep_<PAIR>.json, sweep_README.md
+Usage: python scripts/sweep_backtest.py <forex-data checkout> [--tf D|4H|2H] [PAIR ...]
+       -> forex/backtest/sweep[<tf>]_<PAIR>.json and sweep[<tf>]_README.md (4H files have no tf in the name)
+Timeframe pairs as in the app: 1D sweep -> 1H CHoCH, 4H -> 15m, 2H -> 5m.
 """
 import bisect, json, math, os, sys
 
@@ -27,12 +29,18 @@ import sweep4h as S         # noqa: E402
 import crt_backtest as B    # noqa: E402  (data loading, costs, periods, stats)
 
 OUT_DIR = B.OUT_DIR
-HOLD = 5 * 86400
+HOLD_D = {"D": 20 * 86400, "4H": 5 * 86400, "2H": 3 * 86400}   # max holding time after the fill
 AGG = {"Open": "first", "High": "max", "Low": "min", "Close": "last"}
 
 
 def lists(df):
     return [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in df.iterrows()]
+
+
+TF = "4H"
+SEC = {"D": 86400, "4H": 4 * 3600, "2H": 2 * 3600}
+LTF = {"D": "1h", "4H": "15min", "2H": "5min"}
+PFX = lambda: "sweep" if TF == "4H" else "sweep" + TF
 
 
 def setups(c4, m15):
@@ -43,9 +51,9 @@ def setups(c4, m15):
         if not sw or sw["code"] != "SWEEP":
             continue
         a = bisect.bisect_left(t15, c4[j - 1][0])
-        texp = c4[j + 1 + S.P["EXPIRY"]][0] if j + 1 + S.P["EXPIRY"] < len(c4) else c4[j][0] + (1 + S.P["EXPIRY"]) * S.H4
+        texp = c4[j + 1 + S.P["EXPIRY"]][0] if j + 1 + S.P["EXPIRY"] < len(c4) else c4[j][0] + (1 + S.P["EXPIRY"]) * SEC[TF]
         e = bisect.bisect_left(t15, texp)                         # nothing after the expiry is needed to find the zone
-        x = S.ltf_setup(sw, c4, m15[a:e], open_last=False)
+        x = S.ltf_setup(sw, c4, m15[a:e], open_last=False, sec=SEC[TF])
         out.append({"sw": sw, "x": x, "q": S.quality(sw, x), "texp": texp, "tconf": c4[j + 1][0]})
     return out
 
@@ -77,7 +85,7 @@ def simulate(s, m5, pair):
             return {"placed": True, "filled": False, "why": "missed"}
     if fill is None:
         return {"placed": True, "filled": False, "why": "expired"}
-    end = int(np.searchsorted(T, T[fill] + HOLD, "left"))
+    end = int(np.searchsorted(T, T[fill] + HOLD_D[TF], "left"))
     for k in range(fill, min(end, len(T))):
         stop = (L[k] + hs <= sl) if d == 1 else (H[k] - hs >= sl)
         tgt = (H[k] - hs >= tp) if d == 1 else (L[k] + hs <= tp)
@@ -110,11 +118,11 @@ def run(root, pair):
     m5df = B.load5(root, pair)
     m5 = (np.array([int(t.timestamp()) for t in m5df.index]), m5df.Open.values, m5df.High.values, m5df.Low.values, m5df.Close.values)
     h = m5df.resample("1h", label="left", closed="left").agg(AGG).dropna()
-    c4 = lists(F.build(h)["4H"]); m15 = lists(m5df.resample("15min", label="left", closed="left").agg(AGG).dropna())
+    c4 = lists(F.build(h)[TF]); m15 = lists(m5df.resample(LTF[TF], label="left", closed="left").agg(AGG).dropna())
     su = setups(c4, m15)
     for s in su:
         s["r"] = simulate(s, m5, pair)
-    funnel = {"4H sweeps (closed back inside)": len(su), "with 15m CHoCH": sum(1 for s in su if s["x"].get("choch")),
+    funnel = {"sweeps (closed back inside)": len(su), "with 15m CHoCH": sum(1 for s in su if s["x"].get("choch")),
               "orders placed": sum(1 for s in su if s["r"] and s["r"].get("placed")),
               "filled": sum(1 for s in su if s["r"] and s["r"].get("filled"))}
     for why in ("invalidated", "missed", "expired"):
@@ -138,10 +146,10 @@ def run(root, pair):
 
 
 def summary(pairs):
-    D = {p: json.load(open(os.path.join(OUT_DIR, f"sweep_{p}.json"))) for p in pairs}
-    L = ["# ICT 4H Sweep backtest – summary", "",
+    D = {p: json.load(open(os.path.join(OUT_DIR, f"{PFX()}_{p}.json"))) for p in pairs}
+    L = [f"# ICT {'1D' if TF == 'D' else TF} Sweep backtest – summary (CHoCH on {dict(D='1H', **{'4H': '15m', '2H': '5m'})[TF]})", "",
          f"Pairs: {', '.join(pairs)}. forex-data 5-minute bars from {B.SPLITS[0][1]}; costs per pair as in the CRT backtest. "
-         "Made by `python scripts/sweep_backtest.py <forex-data> " + " ".join(pairs) + "`; execution rules in that script's header. "
+         "Made by `python scripts/sweep_backtest.py <forex-data> --tf " + TF + " " + " ".join(pairs) + "`; execution rules in that script's header. "
          "Average R per filled trade, all pairs pooled; trades in brackets. No threshold was tuned.", "",
          "## Funnel (all pairs)", "", "| Step | Count |", "|---|---|"]
     for k in D[pairs[0]]["funnel"]:
@@ -160,14 +168,18 @@ def summary(pairs):
     for p in pairs:
         L.append(f"| {p} | {B.fmt(D[p]['variants']['all setups (rules as in the app)']['all'])} |")
     L += ["", "Not tested here: the CRT-confluence filter (it needs the CRT state at each moment), news, swaps.", ""]
-    open(os.path.join(OUT_DIR, "sweep_README.md"), "w").write("\n".join(L))
+    open(os.path.join(OUT_DIR, f"{PFX()}_README.md"), "w").write("\n".join(L))
 
 
 def main():
-    root = sys.argv[1]; pairs = sys.argv[2:] or ["EURUSD"]
+    global TF
+    args = sys.argv[1:]; root = args.pop(0)
+    if args[:1] == ["--tf"]:
+        TF = args[1]; args = args[2:]
+    pairs = args or ["EURUSD"]
     os.makedirs(OUT_DIR, exist_ok=True)
     for p in pairs:
-        json.dump(run(root, p), open(os.path.join(OUT_DIR, f"sweep_{p}.json"), "w"), indent=1)
+        json.dump(run(root, p), open(os.path.join(OUT_DIR, f"{PFX()}_{p}.json"), "w"), indent=1)
     summary(pairs)
 
 

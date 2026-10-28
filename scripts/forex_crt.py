@@ -27,7 +27,7 @@ PAIRS = [  # (name, yahoo symbol, pip size)
 ]
 NEAR = 0.25          # "anticipated" when within 25% of the previous candle's range
 KEEP = {"1H": 100, "4H": 100, "D": 60, "W": 60, "M": 24}   # candles per timeframe sent to the app
-LTF_KEEP = {"15m": 320, "5m": 150}                    # lower-timeframe candles for the HTF+LTF view
+LTF_KEEP = {"15m": 320, "5m": 320}                    # lower-timeframe candles for the HTF+LTF view
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forex", "data", "crt.json")
 NY = "America/New_York"
 TFS = {"1H": None, "4H": None, "D": None, "W": None}
@@ -46,6 +46,8 @@ def build(h):
     # 4H blocks start 01,05,09,13,17,21 NY
     k4 = (ny - pd.Timedelta(hours=1)).floor("4h")
     out["4H"] = grp(k4.tz_localize(None).values)
+    k2 = (ny - pd.Timedelta(hours=1)).floor("2h")                           # 2H blocks inside the 4H blocks (sweeps only)
+    out["2H"] = grp(k2.tz_localize(None).values)
     day = (ny + pd.Timedelta(hours=7)).normalize().tz_localize(None)       # trading day starts 17:00 NY
     out["D"] = grp(day.values)
     wk = day.to_period("W-SUN").astype(str)                                  # Mon..Sun trading weeks
@@ -453,6 +455,8 @@ def main(loader=fetch_yahoo):
             tfs = build(h)
             row = {"sym": name, "pip": pip, "src": ysym, "tf": {}}
             for tf, df in tfs.items():
+                if tf == "2H":                     # 2H is only for the sweep screener
+                    continue
                 r = classify(df, tf, pip)
                 if r: row["tf"][tf] = r
             row["price"] = float(h.Close.iloc[-1])
@@ -471,8 +475,14 @@ def main(loader=fetch_yahoo):
                 ltf_full = loader.ltf(name)
             add_model1(row, tfs, ltf_full)
             # ICT 4H sweep setups (scripts/sweep4h.py, same rules as forex/sweep.js)
-            c4 = [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in tfs["4H"].iterrows()]
-            row["sweep"] = S.scan(c4, ltf_full.get("15m") or [], pip, row["price"])
+            # ICT liquidity-sweep setups (sweep4h.py, same rules as forex/sweep.js): Daily -> 1H, 4H -> 15m, 2H -> 5m
+            L = lambda df: [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in df.iterrows()]
+            c4, c2, cd, c1 = L(tfs["4H"]), L(tfs["2H"]), L(tfs["D"]), L(tfs["1H"])
+            row["sweeps"] = {"D": S.scan(cd, c1, pip, row["price"], 86400), "4H": S.scan(c4, ltf_full.get("15m") or [], pip, row["price"], 4 * 3600),
+                             "2H": S.scan(c2, ltf_full.get("5m") or [], pip, row["price"], 2 * 3600)}
+            row["sweep"] = row["sweeps"]["4H"]
+            rd = lambda a: [[c[0]] + [round(v, dg) for v in c[1:]] for c in a]
+            row["c2h"] = rd(c2[-80:]); row["h1"] = rd(c1[-320:])
             out["pairs"].append(row)
             print(name, {k: (v["status"], v["dir"]) for k, v in row["tf"].items()})
         except Exception as e:  # keep going if one pair fails

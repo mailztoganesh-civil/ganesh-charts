@@ -138,11 +138,14 @@ check("[regression] phone engine loads 1 year of hourly data like the GitHub sca
   for (const e of X.evals) {
     const hh = X.h1.filter(b => b[0] <= e.T).map(b => ({ t: b[0], o: b[1], h: b[2], l: b[3], c: b[4] }));
     const mm = X.m15.filter(b => b[0] <= e.T);
-    const res = SW.scan(F.build(hh)["4H"], mm, X.pip, mm[mm.length - 1][4]);
-    n += res.length;
-    if (!near(JSON.parse(JSON.stringify(res)), e.res)) { bad++; if (bad <= 2) console.log("sweep mismatch at", e.T, JSON.stringify({ js: res, py: e.res }).slice(0, 900)); }
+    const B = F.build(hh), px = mm[mm.length - 1][4];
+    const got = { res: SW.scan(B["4H"], mm, X.pip, px, 4 * 3600), resD: SW.scan(B.D, B["1H"], X.pip, px, 86400) };
+    if (X.m5.length && X.m5[0][0] + 86400 <= e.T) got.res2H = SW.scan(B["2H"], X.m5.filter(b => b[0] <= e.T), X.pip, px, 2 * 3600);
+    n += got.res.length + got.resD.length + (got.res2H ? got.res2H.length : 0);
+    const exp = Object.fromEntries(Object.entries(e).filter(([k]) => k !== "T"));
+    if (!near(JSON.parse(JSON.stringify(got)), exp)) { bad++; if (bad <= 2) console.log("sweep mismatch at", e.T, JSON.stringify({ js: got, py: exp }).slice(0, 900)); }
   }
-  check(`[sweep parity] JS = Python at ${X.evals.length} points in time (${n} setups)`, bad === 0, { bad });
+  check(`[sweep parity] JS = Python at ${X.evals.length} points in time (${n} setups on 1D, 4H, 2H)`, bad === 0, { bad });
   // regression (look-ahead): an entry can only fill after the CHoCH candle and after the zone exists
   const early = X.evals.flatMap(e => e.res).filter(r => r.tFill != null && (r.tFill <= r.choch.t || r.tFill <= r.zone.t || r.tFill < r.sweep.t + 4 * 3600));
   check("[sweep] no fill before the CHoCH, the entry zone or the 4H close", early.length === 0, early.slice(0, 2));

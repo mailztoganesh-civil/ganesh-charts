@@ -1,4 +1,4 @@
-/* ICT 4H Sweep tab: screener tables (bullish / bearish), filters, detail charts, CSV export, Telegram alerts,
+/* ICT Sweep tab (1D -> 1H, 4H -> 15m, 2H -> 5m): screener tables (bullish / bearish), filters, detail charts, CSV export, Telegram alerts,
  * the CRT / 4H Sweep tab switch and the dark / light theme button. Detection itself is in forex/sweep.js
  * (phone) and scripts/sweep4h.py (GitHub scan); this file only reads the results (data.pairs[].sweep). */
 (() => {
@@ -15,6 +15,12 @@ const CHIPS = [["a1", "★ A1 best"], ["active", "Active"], ["SWEEPING", "Sweepi
 const DEF = { sweep: 0.05, disp: 1.0, swing: 1.0, grade: "C", crt: false, finished: false, tt: false };
 const GR = { A: 3, B: 2, C: 1 };
 let F = Object.assign({}, DEF, ls.get("sw-f", {})), st = ls.get("sw-st", "active"), dir = 0, data = null, openId = null;
+const TFS = ["D", "4H", "2H"], TFN = { D: "1D", "4H": "4H", "2H": "2H" }, LTFN = { D: "1H", "4H": "15m", "2H": "5m" }, SEC = { D: 86400, "4H": 14400, "2H": 7200 };
+let tfSel = TFS.includes(ls.get("sw-tf", "4H")) ? ls.get("sw-tf", "4H") : "4H";
+const unit = p => p.pip >= 1 ? "pts" : "pips";
+const left = s => { const m = Math.max(0, Math.round((s.sweep.t + SEC[s.tf || tfSel] - Date.now() / 1000) / 60)); return m >= 60 ? Math.floor(m / 60) + "h " + (m % 60) + "m" : m + "m"; };
+const htfCandles = (p, tf) => tf === "2H" ? p.c2h || [] : (p.tf && p.tf[tf] && p.tf[tf].candles) || [];
+const ltfCandles = (p, tf) => tf === "D" ? p.h1 || (p.tf && p.tf["1H"] && p.tf["1H"].candles) || [] : (p.ltf && p.ltf[tf === "2H" ? "5m" : "15m"]) || [];
 
 /* ---------- helpers ---------- */
 const digits = p => p.pip >= 0.1 ? 2 : p.pip >= 0.01 ? 3 : 5;
@@ -44,11 +50,15 @@ function chipMatch(s, key) {
   if (key === "sweep") return s.status === "SWEEP" || s.status === "NO_LTF";
   return s.status === key;
 }
-function rows() {
-  const out = [];
-  for (const p of (data && data.pairs) || []) for (const s of p.sweep || []) out.push({ p, s, id: p.sym + "|" + s.sweep.t });
+function rows(tf) {
+  tf = tf || tfSel; const out = [];
+  for (const p of (data && data.pairs) || []) {
+    const list = (p.sweeps && p.sweeps[tf]) || (tf === "4H" && p.sweep) || [];
+    for (const s of list) { s.tf = tf; out.push({ p, s, tf, id: p.sym + "|" + tf + "|" + s.sweep.t }); }
+  }
   return out;
 }
+const allRows = () => TFS.flatMap(t => rows(t));
 
 /* ---------- screener ---------- */
 function render() {
@@ -58,66 +68,81 @@ function render() {
   $("#swChips").innerHTML = CHIPS.map(([k, n]) => `<button class="chip${st === k ? " on" : ""}" data-st="${k}">${n}<b>${visible.filter(x => chipMatch(x.s, k) && passes(x.p, x.s)).length}</b></button>`).join("");
   const shown = visible.filter(x => chipMatch(x.s, st));
   const ok = shown.filter(x => passes(x.p, x.s)), hidden = shown.length - ok.length;
-  const any = all.length, idx = (data.pairs || []).filter(p => p.sweep).length;
-  $("#swNote").innerHTML = (!idx ? "No 4H sweep data yet – it arrives with the next scan or live update." :
-    `${hidden ? `${hidden} setup${hidden > 1 ? "s" : ""} hidden by your filters. ` : ""}${any} sweep${any === 1 ? "" : "s"} in the last 12 4H candles across ${idx} symbols.`);
+  const T = TFN[tfSel], any = all.length, idx = (data.pairs || []).filter(p => (p.sweeps && p.sweeps[tfSel]) || (tfSel === "4H" && p.sweep)).length;
+  document.querySelectorAll("#swTf button").forEach(b => b.classList.toggle("on", b.dataset.tf === tfSel));
+  $("#swNote").innerHTML = (!idx ? `No ${T} sweep data yet – it arrives with the next live update or scan.` :
+    `${hidden ? `${hidden} setup${hidden > 1 ? "s" : ""} hidden by your filters. ` : ""}${any} ${T} sweep${any === 1 ? "" : "s"} in the last 12 ${T} candles across ${idx} symbols · CHoCH on ${LTFN[tfSel]}.`);
   const sorted = ok.sort((a, b) => ORDER[a.s.status] - ORDER[b.s.status] || b.s.sweep.t - a.s.sweep.t || a.p.sym.localeCompare(b.p.sym));
-  $("#swBull").innerHTML = table(sorted.filter(x => x.s.dir === 1), "▲ Bullish 4H sweeps", "swing low swept → longs");
-  $("#swBear").innerHTML = table(sorted.filter(x => x.s.dir === -1), "▼ Bearish 4H sweeps", "swing high swept → shorts");
+  $("#swBull").innerHTML = table(sorted.filter(x => x.s.dir === 1), `▲ Bullish ${T} sweeps`, "swing low swept → longs");
+  $("#swBear").innerHTML = table(sorted.filter(x => x.s.dir === -1), `▼ Bearish ${T} sweeps`, "swing high swept → shorts");
+  matrix();
   $("#swBull").hidden = dir === -1; $("#swBear").hidden = dir === 1;
   if (openId) drawDetail();
 }
 function table(list, title, sub) {
   const head = `<h2>${title} <span style="text-transform:none;letter-spacing:0;font-weight:600">· ${sub} · ${list.length}</span></h2>`;
   if (!list.length) return head + `<div class="empty">None right now.</div>`;
-  return head + `<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Symbol</th><th>Sweep (4H)</th><th>Status</th><th>Entry</th><th>Dist</th><th>R:R</th><th>Grade</th><th>CRT</th></tr></thead><tbody>` +
+  return head + `<div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Symbol</th><th>Sweep (${TFN[tfSel]})</th><th>Status</th><th>Entry</th><th>Dist ${data && data.pairs && data.pairs.every(p => p.pip >= 1) ? "pts" : "pips/pts"}</th><th>R:R</th><th>Grade</th><th>CRT</th></tr></thead><tbody>` +
     list.map(({ p, s, id }) => `<tr data-sw="${esc(id)}"><td>${esc(p.sym)}${isA1(s) ? ' <span class="a1">A1</span>' : ""}</td><td>${when(s.sweep.t)} <span class="muted">${ago(s.sweep.t)}</span></td>` +
-      `<td><span class="st st-${s.status}">${STATUS[s.status] || s.status}</span></td><td>${s.entry != null ? fmt(p, s.entry) : "–"}</td>` +
+      `<td><span class="st st-${s.status}">${STATUS[s.status] || s.status}</span>${s.status === "SWEEPING" ? ` <span class="muted">closes in ${left(s)}</span>` : ""}</td><td>${s.entry != null ? fmt(p, s.entry) : "–"}</td>` +
       `<td>${s.dist != null && ACTIVE.includes(s.status) ? s.dist.toFixed(1) : "–"}</td><td>${s.rr != null ? s.rr.toFixed(1) : "–"}</td>` +
       `<td><b class="g g${s.q.grade}">${s.q.grade}</b> <span class="muted" title="TTrades checklist">${s.q.ttN != null ? s.q.ttN + "/5" : ""}</span></td><td>${crtOk(p, s) ? '<span class="crtok">✓</span>' : '<span class="muted">–</span>'}</td></tr>`).join("") +
     `</tbody></table></div>`;
 }
 
+/* overview: every symbol x 1D / 4H / 2H, the most important current setup in each cell */
+function matrix() {
+  const SHORT = { ENTRY_READY: "Entry", ENTERED: "In", CHOCH: "CHoCH", SWEEP: "Sweep", NO_LTF: "Sweep", SWEEPING: "Swp" };
+  const pick = (p, tf) => rows(tf).filter(x => x.p === p && ACTIVE.includes(x.s.status) && passes(x.p, x.s))
+    .sort((a, b) => ORDER[a.s.status] - ORDER[b.s.status] || b.s.sweep.t - a.s.sweep.t)[0];
+  $("#swMx").innerHTML = `<h2>All timeframes <span style="text-transform:none;letter-spacing:0;font-weight:600">· tap a cell</span></h2><div style="overflow-x:auto"><table class="mx"><thead><tr><th>Symbol</th>${TFS.map(t => `<th>${TFN[t]} → ${LTFN[t]}</th>`).join("")}</tr></thead><tbody>` +
+    ((data && data.pairs) || []).map(p => `<tr><td>${esc(p.sym)}</td>${TFS.map(t => { const x = pick(p, t); if (!x) return '<td><span class="muted">–</span></td>';
+      const s = x.s, cl = s.status === "ENTRY_READY" || s.status === "ENTERED" ? "s-formed" : s.status === "CHOCH" ? "s-forming" : "s-sweeping";
+      return `<td><button class="dot ${cl} ${s.dir === 1 ? "up" : "dn"}" data-mx="${esc(x.id)}" data-tf="${t}">${s.dir === 1 ? "▲" : "▼"} ${SHORT[s.status]}${isA1(s) ? " ★" : ""}<br><small>${s.q.grade} · ${s.q.ttN}/5</small></button></td>`; }).join("")}</tr>`).join("") +
+    `</tbody></table></div>`;
+}
+
 /* ---------- detail ---------- */
-function find(id) { return rows().find(x => x.id === id); }
+function find(id) { return allRows().find(x => x.id === id); }
 function openDetail(id) { openId = id; $("#swSheet").hidden = false; drawDetail(); }
 function closeDetail() { openId = null; $("#swSheet").hidden = true; }
 function drawDetail() {
   const x = find(openId); if (!x) return closeDetail();
-  const { p, s } = x, w = s.sweep, d = s.dir, up = d === 1;
-  $("#swTitle").textContent = `${p.sym} · ${up ? "▲ Bullish" : "▼ Bearish"} 4H sweep`;
+  const { p, s, tf } = x, w = s.sweep, d = s.dir, up = d === 1, T = TFN[tf], LT = LTFN[tf];
+  $("#swTitle").textContent = `${p.sym} · ${up ? "▲ Bullish" : "▼ Bearish"} ${T} sweep`;
+  $("#swCap1").textContent = `${T} – swing, sweep, back into range, target`; $("#swCap2").textContent = `${LT} – CHoCH, displacement, entry zone`;
   const b = $("#swBadge"); b.textContent = STATUS[s.status] || s.status; b.className = "badge st st-" + s.status;
   const ck = (okv, txt) => `<span class="${okv ? "ok" : "no"}">${okv ? "✓" : "✗"} ${txt}</span>`, c = s.q.checks;
-  $("#swChecks").innerHTML = `<b class="g g${s.q.grade}">${s.q.grade}</b>${ck(c.swing, `4H swing ${w.swingSize.toFixed(1)}× ATR`)}${ck(c.depth, `sweep ${w.depth.toFixed(2)}× ATR`)}` +
+  $("#swChecks").innerHTML = `<b class="g g${s.q.grade}">${s.q.grade}</b>${ck(c.swing, `${T} swing ${w.swingSize.toFixed(1)}× ATR`)}${ck(c.depth, `sweep ${w.depth.toFixed(2)}× ATR`)}` +
     `${ck(c.disp, s.disp != null ? `displacement ${s.disp.toFixed(1)}×` : "displacement")}${ck(c.fvg, s.zone ? s.zone.type + " zone" : "FVG zone")}${ck(c.rr, s.rr != null ? `R:R ${s.rr.toFixed(1)}` : "R:R")}` +
     `${crtOk(p, s) ? '<span class="ok">✓ CRT confluence</span>' : ""}`;
   const t = s.q.tt || {};
   $("#swTT").innerHTML = `<i>TTrades checklist ${s.q.ttN || 0}/5</i>${ck(t.raid, "stop raid")}${ck(t.shift, "structure shift")}` +
     `${ck(t.pd, s.dir === 1 ? "entry in discount" : "entry in premium")}${ck(t.array, s.zone ? "PD array: " + s.zone.type : "PD array")}${ck(t.rr, "solid R:R (≥ 2)")}`;
-  const L = [["Swept level", `${fmt(p, w.level)} <span class="muted">4H swing ${up ? "low" : "high"}</span>`], ["Swing candle", when(w.swingT)],
-    ["Sweep candle (4H)", when(w.t)], ["Sweep extreme", fmt(p, s.ext != null ? s.ext : w.ext)], ["Back into range", w.live ? "4H candle still open" : "✓ closed back inside"],
+  const L = [["Swept level", `${fmt(p, w.level)} <span class="muted">${T} swing ${up ? "low" : "high"}</span>`], ["Swing candle", when(w.swingT)],
+    [`Sweep candle (${T})`, when(w.t)], ["Sweep extreme", fmt(p, s.ext != null ? s.ext : w.ext)], ["Back into range", w.live ? `${T} candle still open · closes in ${left(s)}` : "✓ closed back inside"],
     ["Sweep strength", w.depth.toFixed(2) + "× ATR"]];
-  if (s.choch) L.push(["CHoCH (15m)", `${when(s.choch.t)} · ${fmt(p, s.choch.level)}`], ["Displacement", s.disp.toFixed(2) + "× 15m ATR"]);
+  if (s.choch) L.push([`CHoCH (${LT})`, `${when(s.choch.t)} · ${fmt(p, s.choch.level)}`], ["Displacement", s.disp.toFixed(2) + `× ${LT} ATR`]);
   if (s.eq != null) L.push([s.dir === 1 ? "Discount below (50%)" : "Premium above (50%)", fmt(p, s.eq) + (s.pd ? " ✓" : " ✗")]);
   if (s.zone) L.push(["Entry zone", `${s.zone.type} ${fmt(p, s.zone.lo)}–${fmt(p, s.zone.hi)}`], ["Entry (limit)", fmt(p, s.entry)], ["Stop", fmt(p, s.sl)]);
-  L.push(["Target", w.target != null ? `${fmt(p, w.target)} <span class="muted">${w.targetLabel}</span>` : "–"]);
+  L.push(["Target", w.target != null ? `${fmt(p, w.target)} <span class="muted">${T} ${w.targetLabel}</span>` : "–"]);
   if (s.rr != null) L.push(["R:R", s.rr.toFixed(2)]);
-  if (s.dist != null && ACTIVE.includes(s.status)) L.push(["Distance to entry", s.dist.toFixed(1) + " pips"]);
+  if (s.dist != null && ACTIVE.includes(s.status)) L.push(["Distance to entry", s.dist.toFixed(1) + " " + unit(p)]);
   if (s.tFill) L.push(["Filled", when(s.tFill)]);
   if (s.tExit) L.push([STATUS[s.status], when(s.tExit)]);
   $("#swLv").innerHTML = L.map(([k, v]) => `<div>${k}<b>${v}</b></div>`).join("");
-  $("#swWhy").textContent = why(s);
-  draw4h(p, s); draw15(p, s);
+  $("#swWhy").textContent = why(s, T, LT);
+  draw4h(p, s, tf); draw15(p, s, tf);
 }
-function why(s) {
+function why(s, T, LT) {
   const w = s.sweep, side = s.dir === 1 ? "low" : "high";
-  if (s.status === "SWEEPING") return `The current 4H candle is beyond the 4H swing ${side}. It becomes a sweep only if it closes back inside.`;
-  if (s.status === "SWEEP" || s.status === "NO_LTF") return `4H swept the swing ${side} and closed back inside. Waiting for a 15m close through the last 15m swing ${s.dir === 1 ? "high" : "low"} (CHoCH).`;
-  if (s.status === "CHOCH") return "15m CHoCH formed, but no FVG or order block was found for an entry.";
-  if (s.status === "ENTRY_READY") return `Limit ${s.dir === 1 ? "buy" : "sell"} at ${s.entry} (near edge of the ${s.zone.type}); stop ${s.sl}; target ${w.target} (${w.targetLabel}).`;
+  if (s.status === "SWEEPING") return `The current ${T} candle is beyond the ${T} swing ${side}. It becomes a sweep only if it closes back inside (closes in ${left(s)}).`;
+  if (s.status === "SWEEP" || s.status === "NO_LTF") return `${T} swept the swing ${side} and closed back inside. Waiting for a ${LT} close through the last ${LT} swing ${s.dir === 1 ? "high" : "low"} (CHoCH).`;
+  if (s.status === "CHOCH") return `${LT} CHoCH formed, but no FVG or order block was found for an entry.`;
+  if (s.status === "ENTRY_READY") return `Limit ${s.dir === 1 ? "buy" : "sell"} at ${s.entry} (near edge of the ${s.zone.type}); stop ${s.sl}; target ${w.target} (${T} ${w.targetLabel}).`;
   if (s.status === "ENTERED") return "Price came back to the entry; the trade is running.";
   return { TARGET_HIT: "Reached the opposite liquidity.", STOPPED: "Went beyond the sweep extreme after the entry.", INVALIDATED: "Went beyond the sweep extreme before the entry.",
-    MISSED: "Reached the target without coming back to the entry.", EXPIRED: "No entry within 6 4H candles after the sweep." }[s.status] || "";
+    MISSED: "Reached the target without coming back to the entry.", EXPIRED: `No entry within 6 ${T} candles after the sweep.` }[s.status] || "";
 }
 
 /* ---------- charts ---------- */
@@ -168,8 +193,8 @@ function finish(k, cs, intraday, p, price) {
   g.font = "bold 10px -apple-system,Segoe UI,Roboto,sans-serif";
   k.tags.forEach(([y, col, txt]) => { g.fillStyle = col; g.fillRect(plotW + 6, y - 8, 64, 16); g.fillStyle = "#fff"; g.fillText(txt, plotW + 10, y + 4); });
 }
-function draw4h(p, s) {
-  const cv = $("#swCv1"), all = (p.tf && p.tf["4H"] && p.tf["4H"].candles) || [], w = s.sweep, d = s.dir;
+function draw4h(p, s, tf) {
+  const cv = $("#swCv1"), all = htfCandles(p, tf), w = s.sweep, d = s.dir, T = TFN[tf];
   if (all.length < 5) return;
   const iSwAll = all.findIndex(c => c[0] === w.swingT);
   // last 40 candles; reach further back (up to 60) so the swing candle itself is on the chart
@@ -189,8 +214,8 @@ function draw4h(p, s) {
   g.setLineDash([4, 4]); g.lineWidth = 1.2; g.beginPath(); g.moveTo(xe, Y(w.level)); g.lineTo(plotW + 6, Y(w.level)); g.stroke(); g.restore();
   if (iW >= 0) { g.fillStyle = C.amber; g.beginPath(); g.arc(X(iW), Y(w.level), 3.5, 0, 7); g.fill(); }
   const right = xs > plotW * 0.55;          // keep the label clear of the price axis
-  label(k, `4H swing ${d === 1 ? "low" : "high"}`, right ? xs - 6 : xs + 4, d === 1 ? Y(w.level) + 13 : Y(w.level) - 6, C.amber, right ? "right" : "left");
-  k.tags.push([Y(w.level), C.amber, "4H level"]);
+  label(k, `${T} swing ${d === 1 ? "low" : "high"}`, right ? xs - 6 : xs + 4, d === 1 ? Y(w.level) + 13 : Y(w.level) - 6, C.amber, right ? "right" : "left");
+  k.tags.push([Y(w.level), C.amber, `${T} level`]);
   if (iS >= 0) {           // the part of the sweep candle beyond the level
     g.save(); g.strokeStyle = C.dn; g.lineWidth = Math.max(3, k.bw * .35); g.lineCap = "round"; g.beginPath(); g.moveTo(X(iS), Y(w.level)); g.lineTo(X(iS), Y(w.ext)); g.stroke(); g.restore();
     g.fillStyle = C.dn; g.beginPath(); g.arc(X(iS), Y(w.ext), 4, 0, 7); g.fill();
@@ -200,24 +225,24 @@ function draw4h(p, s) {
   }
   if (w.target != null) hline(k, w.target, C.blue, "TP", iS >= 0 ? X(iS) : 0, false);
   if (s.entry != null) { hline(k, s.entry, col, "Entry", iS >= 0 ? X(iS) : 0, true); hline(k, s.sl, C.dn, "SL", iS >= 0 ? X(iS) : 0, true); }
-  finish(k, cs, true, p, p.price);
+  finish(k, cs, tf !== "D", p, p.price);
 }
-function draw15(p, s) {
-  const cv = $("#swCv2"), all = (p.ltf && p.ltf["15m"]) || [], w = s.sweep, d = s.dir;
-  const c4 = (p.tf && p.tf["4H"] && p.tf["4H"].candles) || [];
-  const k0 = c4.findIndex(c => c[0] === w.t), tPrev = k0 > 0 ? c4[k0 - 1][0] : w.t - 4 * 3600;
+function draw15(p, s, tf) {
+  const cv = $("#swCv2"), all = ltfCandles(p, tf), w = s.sweep, d = s.dir, T = TFN[tf], LT = LTFN[tf];
+  const c4 = htfCandles(p, tf);
+  const k0 = c4.findIndex(c => c[0] === w.t), tPrev = k0 > 0 ? c4[k0 - 1][0] : w.t - SEC[tf];
   let start = all.findIndex(c => c[0] >= tPrev);
-  if (start < 0 || all.length - start < 3) { const k = base(cv, all.length ? all.slice(-20) : [[0, 1, 1, 1, 1]], []); k.g.fillStyle = k.C.sec; k.g.fillText("No 15m candles for this sweep in the current data.", 10, k.H / 2); return; }
+  if (start < 0 || all.length - start < 3) { const k = base(cv, all.length ? all.slice(-20) : [[0, 1, 1, 1, 1]], []); k.g.fillStyle = k.C.sec; k.g.fillText(`No ${LT} candles for this sweep in the current data.`, 10, k.H / 2); return; }
   if (all.length - start > 190) start = all.length - 190;
   const cs = all.slice(start), idx = t => cs.findIndex(c => c[0] === t);
   const k = base(cv, cs, [w.level, s.ext, s.eq, s.choch && s.choch.level, s.watch && s.watch.level, s.zone && s.zone.lo, s.zone && s.zone.hi, s.sl, s.entry]);
   const { g, C, X, Y, step, plotW, padT, H, padB } = k, col = d === 1 ? C.up : C.dn;
   grid(k, p);
-  // 4H candle boundaries; the sweep candle is shaded
+  // higher-timeframe candle boundaries; the sweep candle is shaded
   for (let i = 0; i < c4.length; i++) {
     const t = c4[i][0], a = cs.findIndex(c => c[0] >= t); if (a < 0) continue;
     const bEnd = i + 1 < c4.length ? cs.findIndex(c => c[0] >= c4[i + 1][0]) : -1, x1 = X(a) - step / 2, x2 = (bEnd < 0 ? X(cs.length - 1) : X(bEnd)) - step / 2;
-    if (t === w.t) { g.save(); g.globalAlpha = .14; g.fillStyle = C.amber; g.fillRect(x1, padT - 4, Math.max(2, x2 - x1), H - padB - padT + 4); g.restore(); label(k, "4H sweep candle", (x1 + x2) / 2, padT + 2, C.amber); }
+    if (t === w.t) { g.save(); g.globalAlpha = .14; g.fillStyle = C.amber; g.fillRect(x1, padT - 4, Math.max(2, x2 - x1), H - padB - padT + 4); g.restore(); label(k, `${T} sweep candle`, (x1 + x2) / 2, padT + 2, C.amber); }
     g.save(); g.strokeStyle = C.sec; g.globalAlpha = .45; g.setLineDash([3, 4]); g.beginPath(); g.moveTo(x1, padT - 4); g.lineTo(x1, H - padB); g.stroke(); g.restore();
   }
   // entry zone (behind the candles)
@@ -228,7 +253,7 @@ function draw15(p, s) {
     label(k, s.zone.type, x1 + 4, Y(s.zone.hi) - 4, C.blue, "left");
   }
   candles(k, cs);
-  hline(k, w.level, C.amber, "4H level", 0, true, 1.2);
+  hline(k, w.level, C.amber, `${T} level`, 0, true, 1.2);
   const iX = s.extT ? idx(s.extT) : -1;
   if (iX >= 0) { g.fillStyle = C.dn; g.beginPath(); g.arc(X(iX), Y(s.ext), 4, 0, 7); g.fill(); label(k, "Sweep", X(iX), d === 1 ? Y(s.ext) + 15 : Y(s.ext) - 8, C.dn); }
   if (!s.choch && s.watch) {             // no CHoCH yet: the 15m level that has to break
@@ -256,16 +281,16 @@ function draw15(p, s) {
 
 /* ---------- export ---------- */
 function csv() {
-  const head = ["symbol", "direction", "sweep_time_utc", "status", "swing_level", "swing_size_atr", "sweep_extreme", "sweep_strength_atr", "choch_time_utc",
+  const head = ["symbol", "timeframe", "direction", "sweep_time_utc", "status", "swing_level", "swing_size_atr", "sweep_extreme", "sweep_strength_atr", "choch_time_utc",
     "choch_level", "displacement_atr", "zone_type", "zone_low", "zone_high", "entry", "stop", "target", "target_type", "rr", "distance_pips", "grade", "crt_confluence"];
   const iso = t => t ? new Date(t * 1000).toISOString().replace(".000", "") : "";
   const r2 = (v, n) => v == null ? "" : Number(v).toFixed(n);
-  const lines = rows().filter(x => passes(x.p, x.s)).map(({ p, s }) => { const w = s.sweep, dg = digits(p) + 1;
-    return [p.sym, s.dir === 1 ? "bullish" : "bearish", iso(w.t), STATUS[s.status] || s.status, r2(w.level, dg), r2(w.swingSize, 2), r2(s.ext != null ? s.ext : w.ext, dg), r2(w.depth, 2),
+  const lines = allRows().filter(x => passes(x.p, x.s)).map(({ p, s, tf }) => { const w = s.sweep, dg = digits(p) + 1;
+    return [p.sym, TFN[tf], s.dir === 1 ? "bullish" : "bearish", iso(w.t), STATUS[s.status] || s.status, r2(w.level, dg), r2(w.swingSize, 2), r2(s.ext != null ? s.ext : w.ext, dg), r2(w.depth, 2),
       iso(s.choch && s.choch.t), r2(s.choch && s.choch.level, dg), r2(s.disp, 2), s.zone ? s.zone.type : "", r2(s.zone && s.zone.lo, dg), r2(s.zone && s.zone.hi, dg),
       r2(s.entry, dg), r2(s.sl, dg), r2(w.target, dg), w.targetLabel || "", r2(s.rr, 2), r2(s.dist, 1), s.q.grade, crtOk(p, s) ? "yes" : "no"].join(","); });
   const blob = new Blob([[head.join(","), ...lines].join("\n")], { type: "text/csv" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `ict-4h-sweeps-${new Date().toISOString().slice(0, 16).replace(":", "")}.csv`;
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `ict-sweeps-${new Date().toISOString().slice(0, 16).replace(":", "")}.csv`;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 
@@ -281,11 +306,11 @@ function alerts() {
   if (!tg.on || !tg.token || !tg.chat) return;
   const sent = new Set(ls.get("sw-sent", []));
   let n = 0;
-  for (const { p, s, id } of rows()) {
+  for (const { p, s, id, tf } of allRows()) {
     if (s.status !== "ENTRY_READY" || !passes(p, s) || sent.has(id)) continue;
     const w = s.sweep, up = s.dir === 1;
-    tgSend(`ICT 4H Sweep – ${p.sym} ${up ? "▲ Bullish" : "▼ Bearish"} (grade ${s.q.grade})\nEntry ready: ${up ? "buy" : "sell"} limit ${fmt(p, s.entry)} (${s.zone.type})\n` +
-      `Stop ${fmt(p, s.sl)} · Target ${fmt(p, w.target)} · R:R ${s.rr != null ? s.rr.toFixed(1) : "–"}\nSwept 4H swing ${up ? "low" : "high"} ${fmt(p, w.level)} at ${when(w.t)}${crtOk(p, s) ? " · CRT ✓" : ""}`);
+    tgSend(`ICT ${TFN[tf]} Sweep – ${p.sym} ${up ? "▲ Bullish" : "▼ Bearish"} (grade ${s.q.grade})\nEntry ready: ${up ? "buy" : "sell"} limit ${fmt(p, s.entry)} (${s.zone.type})\n` +
+      `Stop ${fmt(p, s.sl)} · Target ${fmt(p, w.target)} · R:R ${s.rr != null ? s.rr.toFixed(1) : "–"}\nSwept ${TFN[tf]} swing ${up ? "low" : "high"} ${fmt(p, w.level)} at ${when(w.t)}${crtOk(p, s) ? " · CRT ✓" : ""}`);
     sent.add(id); n++;
   }
   if (n) { ls.set("sw-sent", [...sent].slice(-300)); $("#tgState").textContent = `Sent ${n} alert${n > 1 ? "s" : ""} at ${new Date().toLocaleTimeString()}.`; }
@@ -295,7 +320,7 @@ function alerts() {
 function setTab(t) {
   document.querySelectorAll("#appTab button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
   $("#crtView").hidden = t !== "crt"; $("#swView").hidden = t !== "sweep"; ls.set("fx-tab", t);
-  document.querySelector("header h1").textContent = t === "sweep" ? "ICT 4H Sweep" : "Forex CRT";
+  document.querySelector("header h1").textContent = t === "sweep" ? "ICT Sweeps" : "Forex CRT";
 }
 function applyTheme(m) {
   if (m === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = m;
@@ -319,6 +344,8 @@ document.addEventListener("click", e => { const r = e.target.closest("tr[data-sw
 $("#swClose").onclick = closeDetail;
 $("#swSheet").addEventListener("click", e => { if (e.target.id === "swSheet") closeDetail(); });
 $("#swCsv").onclick = csv;
+$("#swTf").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; tfSel = b.dataset.tf; ls.set("sw-tf", tfSel); render(); });
+$("#swMx").addEventListener("click", e => { const b = e.target.closest("button[data-mx]"); if (!b) return; tfSel = b.dataset.tf; ls.set("sw-tf", tfSel); render(); openDetail(b.dataset.mx); });
 $("#appTab").addEventListener("click", e => { const b = e.target.closest("button"); if (b) setTab(b.dataset.tab); });
 $("#theme").onclick = () => { const cur = ls.get("fx-theme", "dark"), nx = cur === "dark" ? "light" : cur === "light" ? "auto" : "dark"; ls.set("fx-theme", nx); applyTheme(nx); };
 $("#tgToken").value = tg.token; $("#tgChat").value = tg.chat; $("#tgOn").checked = tg.on;

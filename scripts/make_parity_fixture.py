@@ -34,6 +34,8 @@ def scan(h):
     tfs = F.build(h)
     row = {"sym": "EURUSD", "pip": PIP, "tf": {}}
     for tf, df in tfs.items():
+        if tf == "2H":
+            continue
         r = F.classify(df, tf, PIP)
         if r:
             row["tf"][tf] = r

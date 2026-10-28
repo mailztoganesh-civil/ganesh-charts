@@ -119,7 +119,7 @@
   <button id="refresh" type="button" aria-label="Refresh">↻</button>
 </header>
 <main>
-  <div class="seg two" id="appTab" role="tablist" aria-label="Screener"><button data-tab="crt" class="on">CRT</button><button data-tab="sweep">ICT 4H Sweep</button></div>
+  <div class="seg two" id="appTab" role="tablist" aria-label="Screener"><button data-tab="crt" class="on">CRT</button><button data-tab="sweep">ICT Sweeps</button></div>
   <div id="crtView" style="display:grid;gap:12px;min-width:0">
   <div class="seg" id="tfSeg" role="tablist" aria-label="Timeframe">
     <button data-tf="1H">1H</button><button data-tf="4H" class="on">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button><button data-tf="M">Monthly</button>
@@ -169,6 +169,7 @@
   </section>
   </div>
   <div id="swView" hidden style="display:grid;gap:12px;min-width:0">
+    <div class="seg" id="swTf" style="grid-template-columns:repeat(3,1fr)" role="tablist" aria-label="Sweep timeframe"><button data-tf="D">1D sweep</button><button data-tf="4H" class="on">4H sweep</button><button data-tf="2H">2H sweep</button></div>
     <div class="chips" id="swChips" aria-label="Status filter"></div>
     <div class="chips" id="swDir" aria-label="Direction filter">
       <button class="chip on" data-dir="0">Both</button><button class="chip" data-dir="1">▲ Bullish</button><button class="chip" data-dir="-1">▼ Bearish</button>
@@ -176,6 +177,7 @@
     <div class="muted" id="swNote"></div>
     <section class="card" id="swBull"></section>
     <section class="card" id="swBear"></section>
+    <section class="card" id="swMx"></section>
     <section class="card">
       <h2>Filters</h2>
       <div class="fl">
@@ -201,7 +203,7 @@
       <div class="muted" id="tgState"></div>
     </section>
     <section class="card legend">
-      <b>How a setup is found</b> (same rules on the phone and in the GitHub scan)<br>
+      <b>How a setup is found</b> (same rules on the phone and in the GitHub scan). The same rules run on three pairs of timeframes: <b>1D sweep → 1H CHoCH</b>, <b>4H sweep → 15m CHoCH</b> and <b>2H sweep → 5m CHoCH</b>. Below, “4H” and “15m” stand for whichever pair you picked; ATR, candle counts (60 back, 12 recent, 6 to expire) are in that timeframe's candles.<br>
       <b>1. 4H swing</b> – a 4H candle whose high is above the 2 candles before it and not below the 2 after it (lows mirrored); known once those 2 candles closed. Size = swing high minus the lowest low of those 5 candles, in 4H ATR(14).<br>
       <b>2. Sweep</b> – a 4H candle trades beyond an untouched swing from the last 60 4H candles (equal = touch, not a sweep). If it takes several, the furthest counts; taking a high and a low together is skipped as ambiguous. Strength = distance beyond the level in 4H ATR.<br>
       <b>3. Back into range</b> – the sweep candle must close back inside the level. While it is still open the setup is only <i>Sweeping</i>; closing beyond is a break, not a sweep.<br>
@@ -234,8 +236,8 @@
   <div class="panel" role="dialog" aria-modal="true" aria-labelledby="swTitle">
     <div class="hd"><h3 id="swTitle">EURUSD</h3><span class="badge" id="swBadge"></span><button class="x" id="swClose" type="button">Close</button></div>
     <div class="charts two">
-      <div><div class="cap">4H – swing, sweep, back into range, target</div><canvas id="swCv1" aria-label="4H chart"></canvas></div>
-      <div><div class="cap">15m – CHoCH, displacement, entry zone</div><canvas id="swCv2" aria-label="15 minute chart"></canvas></div>
+      <div><div class="cap" id="swCap1">4H – swing, sweep, back into range, target</div><canvas id="swCv1" aria-label="4H chart"></canvas></div>
+      <div><div class="cap" id="swCap2">15m – CHoCH, displacement, entry zone</div><canvas id="swCv2" aria-label="15 minute chart"></canvas></div>
     </div>
     <div class="q" id="swChecks"></div>
     <div class="q" id="swTT"></div>
@@ -243,11 +245,11 @@
     <div class="muted" id="swWhy"></div>
   </div>
 </div>
-<script src="sweep.js?v=17"></script>
-<script src="live.js?v=17"></script>
-<script src="app.js?v=17"></script>
-<script src="sweep-ui.js?v=17"></script>
-<script src="export.js?v=17"></script>
+<script src="sweep.js?v=18"></script>
+<script src="live.js?v=18"></script>
+<script src="app.js?v=18"></script>
+<script src="sweep-ui.js?v=18"></script>
+<script src="export.js?v=18"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

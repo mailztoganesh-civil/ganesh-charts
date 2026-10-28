@@ -18,7 +18,7 @@ function load(url) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const stamp = () => { const d = new Date(), p = n => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`; };
 const bg = () => getComputedStyle(document.body).backgroundColor || "#110D1A";
-const tabName = () => $("#swView") && !$("#swView").hidden ? "ICT-4H-Sweep" : "Forex-CRT";
+const tabName = () => $("#swView") && !$("#swView").hidden ? "ICT-Sweeps" : "Forex-CRT";
 function status(t) { const el = $("#exState"); if (el) el.textContent = t; }
 
 /* Render one element (its full height, also the part scrolled out of view) to a canvas. */
@@ -106,7 +106,7 @@ function alertBox(t) { toast(t); setTimeout(() => toast(""), 3500); }
 function closeMenu() { const m = $("#exMenu"); if (m) m.hidden = true; }
 function menu() {
   const m = $("#exMenu"); const sheetOpen = !$("#swSheet").hidden || !$("#sheet").hidden;
-  $("#exWhat").textContent = sheetOpen ? "This setup (the open detail)" : `This page (${!$("#swView").hidden ? "ICT 4H Sweep" : "CRT"} tab)`;
+  $("#exWhat").textContent = sheetOpen ? "This setup (the open detail)" : `This page (${!$("#swView").hidden ? "ICT Sweeps" : "CRT"} tab)`;
   $("#exAll").hidden = sheetOpen;
   m.hidden = !m.hidden;
 }

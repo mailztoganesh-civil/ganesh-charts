@@ -72,7 +72,7 @@ def sweep_at(cs, j, live=False):
         if not ok or ((o["price"] >= c) if d == -1 else (o["price"] <= c)):
             continue
         if target is None or ((o["price"] > target) if d == -1 else (o["price"] < target)):
-            target = o["price"]; tlabel = "4H swing low" if d == -1 else "4H swing high"
+            target = o["price"]; tlabel = "swing low" if d == -1 else "swing high"
     if target is None:
         back20 = cs[max(0, j - P["TARGET_BACK"]):j]
         if back20:
@@ -84,11 +84,11 @@ def sweep_at(cs, j, live=False):
             "depth": ((ext - s["price"]) if d == -1 else (s["price"] - ext)) / a4, "atr4": a4, "target": target, "targetLabel": tlabel}
 
 
-def ltf_setup(sw, c4, m15, open_last=True):
+def ltf_setup(sw, c4, m15, open_last=True, sec=H4):
     """Steps 5-8 on the 15m candles (oldest first). open_last = the last 15m candle is still forming."""
     d = sw["dir"]; j = sw["j"]
     t4 = c4[j][0]; tprev = c4[j - 1][0]
-    texp = c4[j + 1 + P["EXPIRY"]][0] if j + 1 + P["EXPIRY"] < len(c4) else t4 + (1 + P["EXPIRY"]) * H4
+    texp = c4[j + 1 + P["EXPIRY"]][0] if j + 1 + P["EXPIRY"] < len(c4) else t4 + (1 + P["EXPIRY"]) * sec
     n = len(m15); last_closed = n - 1 - (1 if open_last else 0)
     a = next((i for i, b in enumerate(m15) if b[0] >= tprev), -1)
     s = next((i for i, b in enumerate(m15) if b[0] >= t4), -1)
@@ -157,7 +157,7 @@ def ltf_setup(sw, c4, m15, open_last=True):
     out["rr"] = (abs(tp - entry) / abs(sl - entry)
                  if tp is not None and (tp - entry) * d > 0 and abs(sl - entry) > 0 else None)
     out["status"] = "ENTRY_READY"
-    tconf = c4[j + 1][0] if j + 1 < len(c4) else t4 + H4      # no fill before the 4H sweep candle has closed
+    tconf = c4[j + 1][0] if j + 1 < len(c4) else t4 + sec      # no fill before the 4H sweep candle has closed
     filled = False
     for k in range(max(best["from"], b) + 1, n):       # zone usable only after the CHoCH closed
         t = m15[k][0]; hk = H(k); lk = L(k)
@@ -193,7 +193,7 @@ def quality(sw, x):
     return {"checks": c, "score": n, "grade": "A" if n >= 4 else "B" if n == 3 else "C", "tt": tt, "ttN": sum(1 for v in tt.values() if v)}
 
 
-def scan(c4, m15, pip, price):
+def scan(c4, m15, pip, price, sec=H4):
     """4H sweeps of the last RECENT 4H candles (newest first) with their 15m setups. Last candles are still forming."""
     c4 = [[int(b[0])] + [float(v) for v in b[1:5]] for b in c4]       # plain floats (numpy bools are not JSON)
     m15 = [[int(b[0])] + [float(v) for v in b[1:5]] for b in (m15 or [])]
@@ -202,7 +202,7 @@ def scan(c4, m15, pip, price):
         sw = sweep_at(c4, j, j == n - 1)
         if not sw or sw["code"] in ("AMBIGUOUS", "BREAK"):
             continue
-        x = ltf_setup(sw, c4, m15, True) if m15 else {"status": "NO_LTF"}
+        x = ltf_setup(sw, c4, m15, True, sec) if m15 else {"status": "NO_LTF"}
         status = "SWEEPING" if sw["live"] else x["status"]
         q = quality(sw, x)
         dist = abs(price - x["entry"]) / pip if x.get("entry") is not None and price is not None else None
