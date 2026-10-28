@@ -744,6 +744,60 @@
     "dir": 1,
     "c1": 0
    }
+  },
+  {
+   "name": "very small C1 (0.2 pip range) is still a valid C1; size is only a filter",
+   "test": 7,
+   "candles": [
+    [
+     3600,
+     1.1,
+     1.10002,
+     1.1,
+     1.10001
+    ],
+    [
+     7200,
+     1.10001,
+     1.100015,
+     1.09999,
+     1.100012
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 0
+   }
+  },
+  {
+   "name": "very large C2 (sweep deeper than C1's range) is still identified as C2",
+   "test": 7,
+   "candles": [
+    [
+     3600,
+     110,
+     120,
+     100,
+     105
+    ],
+    [
+     7200,
+     104,
+     108,
+     70,
+     106
+    ]
+   ],
+   "j": 1,
+   "live": false,
+   "expect": {
+    "code": "FORMED",
+    "dir": 1,
+    "c1": 0
+   }
   }
  ],
  "clean": {
@@ -851,5 +905,121 @@
    104,
    106
   ]
- ]
+ ],
+ "live_snapshots": {
+  "before": [
+   [
+    3600,
+    130,
+    135,
+    125,
+    132
+   ],
+   [
+    7200,
+    110,
+    120,
+    100,
+    105
+   ]
+  ],
+  "snaps": [
+   {
+    "c2": [
+     104,
+     106,
+     101,
+     105
+    ],
+    "status": "anticipated",
+    "state": "WATCHING"
+   },
+   {
+    "c2": [
+     104,
+     106,
+     97,
+     99
+    ],
+    "status": "sweeping",
+    "state": "SWEEPING"
+   },
+   {
+    "c2": [
+     104,
+     106,
+     97,
+     103
+    ],
+    "status": "forming",
+    "state": "FORMING"
+   }
+  ],
+  "closed": {
+   "c2": [
+    104,
+    106,
+    97,
+    103
+   ],
+   "c3": [
+    103,
+    103,
+    103,
+    103
+   ],
+   "expect": {
+    "status": "formed",
+    "state": "CONFIRMED",
+    "code": "FORMED",
+    "dir": 1,
+    "c2Back": 1,
+    "c1t": 7200,
+    "c2t": 10800,
+    "sigt": 14400,
+    "entry": 103,
+    "t1": 110,
+    "t2": 120,
+    "inv": 97,
+    "sweep": 97
+   }
+  }
+ },
+ "large_sweep_c2check": {
+  "candles": [
+   [
+    3600,
+    130,
+    135,
+    125,
+    132
+   ],
+   [
+    7200,
+    110,
+    120,
+    100,
+    105
+   ],
+   [
+    10800,
+    104,
+    108,
+    70,
+    106
+   ],
+   [
+    14400,
+    106,
+    107,
+    104,
+    105
+   ]
+  ],
+  "expect": {
+   "code": "FORMED",
+   "sweepOk": false,
+   "depthPips": 3000.0
+  }
+ }
 }

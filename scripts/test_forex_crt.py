@@ -63,5 +63,42 @@ class Sequence(unittest.TestCase):
         self.assertEqual(json.dumps(S), before)
 
 
+class EdgeCases(unittest.TestCase):
+    def test_live_snapshots_then_close(self):  # tests 9, 10
+        L = T["live_snapshots"]
+        for sn in L["snaps"]:
+            r = F.classify_cs(L["before"] + [[3 * 3600] + sn["c2"]], "1H", 0.01)
+            self.assertEqual((r["status"], r["state"]), (sn["status"], sn["state"]))
+        r = F.classify_cs(L["before"] + [[3 * 3600] + L["closed"]["c2"], [4 * 3600] + L["closed"]["c3"]], "1H", 0.01)
+        self.assertEqual({k: r.get(k) for k in L["closed"]["expect"]}, L["closed"]["expect"])
+
+    def test_deep_sweep_is_c2_but_fails_filter(self):   # test 7
+        X = T["large_sweep_c2check"]
+        r = F.classify_cs(X["candles"], "1H", 0.01); q2 = F.c2_checks({"1H": X["candles"]}, "1H", r, 0.01)
+        self.assertEqual((r["code"], q2["sweep"], q2["depth"]), (X["expect"]["code"], X["expect"]["sweepOk"], X["expect"]["depthPips"]))
+
+    def test_clean_df_sorts_dedupes_drops(self):        # test 8
+        import pandas as pd
+        rows = T["clean"]["input"]
+        df = pd.DataFrame([r[1:] for r in rows], columns=["Open", "High", "Low", "Close"],
+                          index=pd.to_datetime([r[0] for r in rows], unit="s", utc=True))
+        got = [[int(t.timestamp()), r.Open, r.High, r.Low, r.Close] for t, r in F.clean_df(df).iterrows()]
+        self.assertEqual(got, T["clean"]["expect"])
+
+
+class Parity(unittest.TestCase):
+    def test_python_matches_committed_fixture(self):
+        """The Python side of forex/tests/parity_fixture.json (the JS side is checked by run_tests.js)."""
+        import pandas as pd
+        import make_parity_fixture as M
+        P = json.load(open(os.path.join(HERE, "..", "forex", "tests", "parity_fixture.json")))
+        b = P["bars"]
+        h = pd.DataFrame([x[1:] for x in b], columns=["Open", "High", "Low", "Close"],
+                         index=pd.to_datetime([x[0] for x in b], unit="s", utc=True))
+        for e in P["evals"][::4] + P["evals"][-1:]:        # every 4th point keeps the test quick; JS checks all
+            got = json.loads(json.dumps(M.scan(h.iloc[:e["end"] + 1])))
+            self.assertEqual(got, e["tf"], f"evaluation ending at bar {e['end']}")
+
+
 if __name__ == "__main__":
     unittest.main()

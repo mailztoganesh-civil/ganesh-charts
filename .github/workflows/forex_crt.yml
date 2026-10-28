@@ -8,6 +8,7 @@ on:
       - ".github/workflows/forex_crt.yml"
       - "scripts/forex_crt.py"
       - "scripts/test_forex_crt.py"
+      - "scripts/make_parity_fixture.py"
       - "forex/live.js"
       - "forex/tests/**"
   schedule:

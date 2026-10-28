@@ -57,6 +57,7 @@ TF_HOURS = {"1H": 1, "4H": 4, "D": 24, "W": 120, "M": 0}
 LTF_FOR = {"M": "D", "W": "4H", "D": "1H", "4H": "15m", "1H": "5m"}   # Model-1 is looked for on this timeframe
 
 
+ENGINE = "crt-engine-2026-10-28"   # shared with forex/live.js ENGINE
 LOOK = 10             # how far back C1 (the range candle) can be
 TWO_SIDED = "ambiguous"   # a C2 that sweeps both C1 boundaries is AMBIGUOUS; "outer-third" = old experimental rule
 ACTIVE = 2            # a formed CRT keeps its original C1/C2 pair through C3 and C4 (C2 up to 2 closed candles back)
@@ -162,7 +163,7 @@ def classify_cs(cs, tf, pip):
             if (l < inv) if d == 1 else (h > inv): failed = True; break
         risk = abs(price - inv)
         f = pack(i, status="formed", dir=d, t1=t1, t2=t2, inv=inv, c1h=H1, c1l=L1, sweep=inv, c1Back=n - 1 - i["c1"],
-                 c2Back=n - 1 - j, hit1=hit1, hit2=hit2, failed=failed,
+                 c2Back=n - 1 - j, sigt=cs[j + 1][0], entry=cs[j + 1][1], hit1=hit1, hit2=hit2, failed=failed,
                  toT2=round((t2 - price) * d / pip, 1), rr=round(abs(t2 - price) / risk, 2) if risk > 0 else None)
         if not hit2 and not failed:
             active = active or f
@@ -196,7 +197,7 @@ def classify_cs(cs, tf, pip):
                 if not hit2 and not failed and (t2 - price) * d > 0:
                     c3 = pack(i, status="c3close", code="C3_CLOSURE", reason=f"C2 {i['reason']}; C3 closed back through C2's open",
                               dir=d, t1=(i["c1h"] + i["c1l"]) / 2, t2=t2, inv=inv, c1h=i["c1h"], c1l=i["c1l"], sweep=inv,
-                              c1Back=n - 1 - i["c1"], c2Back=2, hit1=False, hit2=False, failed=False,
+                              c1Back=n - 1 - i["c1"], c2Back=2, sigt=cs[n - 1][0], entry=cs[n - 1][1], hit1=False, hit2=False, failed=False,
                               toT2=round((t2 - price) * d / pip, 1), rr=round(abs(t2 - price) / risk, 2) if risk > 0 else None)
     # priority: active formed > forming > sweeping > C3 closure > formed (finished) > anticipated > none (with reason)
     if active:
@@ -216,6 +217,9 @@ def classify_cs(cs, tf, pip):
         i = lid if lid["code"] in ("AMBIGUOUS", "INVALID_DATA") else identify(cs, n - 2)
         res = {"status": "none", "dir": 0, "code": i["code"],
                "reason": ("current candle: " if i is lid else "last closed candle: ") + i["reason"]}
+    # one explicit state per result; CONFIRMED only for a closed C2 (or closed C3 for C3 closure)
+    res["state"] = {"formed": "CONFIRMED", "c3close": "CONFIRMED", "done": "TARGET_HIT", "failed": "INVALIDATED",
+                    "forming": "FORMING", "sweeping": "SWEEPING", "anticipated": "WATCHING"}.get(res["status"], res.get("code"))
     res["price"] = price
     start = cs[-1][0]
     res["end"] = (start + TF_HOURS[tf] * 3600) * 1000 if TF_HOURS.get(tf) else None
@@ -436,7 +440,7 @@ def fetch_yahoo(symbol, interval="1h", period="1y"):
 
 
 def main(loader=fetch_yahoo):
-    out = {"updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "near": NEAR, "pairs": []}
+    out = {"updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "engine": ENGINE, "near": NEAR, "pairs": []}
     for name, ysym, pip in PAIRS:
         try:
             h = loader(ysym if loader is fetch_yahoo else name)

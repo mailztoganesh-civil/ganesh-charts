@@ -62,5 +62,57 @@ const S = T.sequence, t = i => S[i][0];
   check("[14] same input -> identical output (no duplicate / shifting signals)", r1 === r2);
   check("[14] input candles are not modified", JSON.stringify(S) === before);
 }
+// 9: a live candle changes classification before it closes; only the closed candle is CONFIRMED
+{
+  const L = T.live_snapshots;
+  for (const sn of L.snaps) {
+    const r = F.classify(L.before.concat([[3 * 3600, ...sn.c2]]), "1H", 0.01);
+    check(`[9] live snapshot ${JSON.stringify(sn.c2)} -> ${sn.status}`, r.status === sn.status && r.state === sn.state && r.state !== "CONFIRMED", r);
+  }
+  const r = F.classify(L.before.concat([[3 * 3600, ...L.closed.c2], [4 * 3600, ...L.closed.c3]]), "1H", 0.01);
+  const got = {}; for (const k of Object.keys(L.closed.expect)) got[k] = r[k];
+  check("[10] after the close: CONFIRMED with signal time, entry, stop and target levels", eq(got, L.closed.expect), got);
+}
+// 7: a sweep deeper than C1's range is still C2; the clean-sweep check (a filter) flags it
+{
+  const X = T.large_sweep_c2check, r = F.classify(X.candles, "1H", 0.01), q2 = F.c2Checks({ "1H": X.candles }, "1H", r, 0.01);
+  check("[7] deep sweep: identified, sweep filter fails", r.code === X.expect.code && q2.sweep === X.expect.sweepOk && q2.depth === X.expect.depthPips, { r: r.code, q2 });
+}
+// regression: the phone loaded 6 months of hourly data while the GitHub scan loads 1 year, so Monthly C1 grades differed
+check("[regression] phone engine loads 1 year of hourly data like the GitHub scan",
+  /get\(base, ysym, "1h", fresh \? "1y"/.test(fs.readFileSync(path.join(__dirname, "..", "live.js"), "utf8")));
+// Parity with the Python scanner on real EURUSD data (parity_fixture.json, made by scripts/make_parity_fixture.py):
+// candle building, identification, levels, signal time, C1/C2 checks and Model-1 must match.
+{
+  const P = JSON.parse(fs.readFileSync(path.join(__dirname, "parity_fixture.json"), "utf8"));
+  const bars = P.bars.map(b => ({ t: b[0], o: b[1], h: b[2], l: b[3], c: b[4] }));
+  // numbers: prices to 2e-6 (rounding to 6 decimals in either language); pips / R:R are rounded to 0.1 / 0.01
+  const TOL = { toT2: 0.051, depth: 0.051, need: 0.051, dist: 0.051, rr: 0.0051 };
+  const same = (a, b, k) => {
+    if (a == null || b == null) return a == null && b == null;
+    if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) <= (TOL[k] ?? 2e-6);
+    if (typeof a !== "object") return a === b;
+    if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((x, i) => same(x, b[i], k));
+    const ks = new Set([...Object.keys(a), ...Object.keys(b)]);
+    return [...ks].every(kk => same(a[kk], b[kk], kk));
+  };
+  let checked = 0, bad = 0;
+  for (const e of P.evals) {
+    const tfs = F.build(bars.slice(0, e.end + 1));
+    const row = { sym: P.pair, pip: P.pip, tf: {} };
+    for (const tf of ["1H", "4H", "D", "W", "M"]) { const r = F.classify(tfs[tf], tf, P.pip); if (r) row.tf[tf] = r; }
+    F.addModel1(row, tfs, {});
+    for (const [tf, py] of Object.entries(e.tf)) {
+      const r = row.tf[tf]; checked++;
+      const js = {};
+      for (const k of Object.keys(py)) if (!["last", "n"].includes(k)) js[k] = r[k];
+      for (const k of ["q", "q2", "m1"]) if (r[k] && !(k in py)) js[k] = r[k];
+      const ok = same(js, Object.fromEntries(Object.entries(py).filter(([k]) => !["last", "n"].includes(k)))) &&
+        tfs[tf].length === py.n && same(r.candles[r.candles.length - 1], py.last);
+      if (!ok) { bad++; if (bad <= 3) console.log("parity mismatch", e.end, tf, JSON.stringify({ py, js }).slice(0, 600)); }
+    }
+  }
+  check(`[parity] JS = Python on ${checked} real-data results (${P.evals.length} points in time x 5 timeframes)`, bad === 0, { bad });
+}
 console.log(`JS: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

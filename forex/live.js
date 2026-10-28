@@ -55,6 +55,7 @@ function build(bars) {
 
 function round(v, dg) { const f = Math.pow(10, dg); return Math.round(v * f) / f; }
 
+const ENGINE = "crt-engine-2026-10-28";   // shared with scripts/forex_crt.py ENGINE
 const LOOK = 10;            // how far back C1 (the range candle) can be
 const TWO_SIDED = "ambiguous";   // a C2 that sweeps both C1 boundaries is AMBIGUOUS; "outer-third" = old experimental rule
 const ACTIVE = 2;          // a formed CRT keeps its original C1/C2 pair through C3 and C4 (C2 up to 2 closed candles back)
@@ -128,6 +129,7 @@ function classify(cs, tf, pip) {
     }
     const risk = Math.abs(price - inv);
     const f = pack(id, { status: "formed", dir: d, t1, t2, inv, c1h: H1, c1l: L1, sweep: inv, c1Back: n - 1 - id.c1, c2Back: n - 1 - j,
+      sigt: cs[j + 1][0], entry: cs[j + 1][1],
       hit1, hit2, failed, toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null });
     if (!hit2 && !failed) { if (!active) active = f; }
     else finished = f;                       // the most recent finished one
@@ -161,6 +163,7 @@ function classify(cs, tf, pip) {
         if (!hit2 && !failed && (t2 - price) * d > 0)
           c3 = pack(id, { status: "c3close", code: "C3_CLOSURE", reason: `C2 ${id.reason}; C3 closed back through C2's open`, dir: d,
             t1: (id.c1h + id.c1l) / 2, t2, inv, c1h: id.c1h, c1l: id.c1l, sweep: inv, c1Back: n - 1 - id.c1, c2Back: 2,
+            sigt: cs[n - 1][0], entry: cs[n - 1][1],
             hit1: false, hit2: false, failed: false, toT2: round((t2 - price) * d / pip, 1), rr: risk > 0 ? round(Math.abs(t2 - price) / risk, 2) : null });
       }
     }
@@ -175,12 +178,16 @@ function classify(cs, tf, pip) {
     const id = lid.code === "AMBIGUOUS" || lid.code === "INVALID_DATA" ? lid : identify(cs, n - 2, false);
     res = { status: "none", dir: 0, code: id.code, reason: (id === lid ? "current candle: " : "last closed candle: ") + id.reason };
   }
+  // one explicit state per result. CONFIRMED only for a closed C2 (or a closed C3 for C3 closure); open candles are
+  // FORMING / SWEEPING and never CONFIRMED.
+  res.state = { formed: "CONFIRMED", c3close: "CONFIRMED", done: "TARGET_HIT", failed: "INVALIDATED", forming: "FORMING",
+    sweeping: "SWEEPING", anticipated: "WATCHING" }[res.status] || res.code;
   res.price = price;
   const start = cs[cs.length - 1][0];
   res.end = TF_HOURS[tf] ? (start + TF_HOURS[tf] * H) * 1000 : null;
   const dg = pip >= 0.1 ? 2 : pip >= 0.01 ? 3 : 5;
   res.candles = cs.slice(-KEEP[tf]).map(c => [c[0], round(c[1], dg), round(c[2], dg), round(c[3], dg), round(c[4], dg)]);
-  for (const k of ["t1", "t2", "inv", "c1h", "c1l", "sweep", "level", "price"]) if (typeof res[k] === "number") res[k] = round(res[k], dg + 1);
+  for (const k of ["t1", "t2", "inv", "c1h", "c1l", "sweep", "level", "price", "entry"]) if (typeof res[k] === "number") res[k] = round(res[k], dg + 1);
   return res;
 }
 
@@ -327,7 +334,7 @@ async function get(base, sym, interval, range) {
 }
 async function pair(base, [name, ysym, pip]) {
   const fresh = !store[ysym];
-  const hourly = await get(base, ysym, "1h", fresh ? "6mo" : "2d");
+  const hourly = await get(base, ysym, "1h", fresh ? "1y" : "2d");   // 1 year, same as the GitHub scan
   if (fresh) store[ysym] = new Map();
   const m = store[ysym];
   hourly.forEach(b => m.set(b.t, b));
@@ -348,7 +355,7 @@ async function load(base) {
   const rows = await Promise.all(PAIRS.map(p => pair(base, p).catch(e => { console.warn(e.message); return null; })));
   const pairs = rows.filter(Boolean);
   if (!pairs.length) throw new Error("live data unavailable");
-  return { updated: new Date().toISOString(), near: NEAR, pairs, live: true, missing: rows.length - pairs.length };
+  return { updated: new Date().toISOString(), engine: ENGINE, near: NEAR, pairs, live: true, missing: rows.length - pairs.length };
 }
-window.FXLive = { load, build, classify, identify, mother, clean, okBar, model1, addModel1, c1Quality, c2Checks, PAIRS, LOOK, ACTIVE };
+window.FXLive = { ENGINE, load, build, classify, identify, mother, clean, okBar, model1, addModel1, c1Quality, c2Checks, PAIRS, LOOK, ACTIVE };
 })();

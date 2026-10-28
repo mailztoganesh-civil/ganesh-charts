@@ -236,7 +236,8 @@ function drawDetail() {
   if (r.t2 != null) L.push(["Pips to T2", pips(p, r.price, r.t2).toFixed(1)]);
   if (r.rr != null) L.push(["R:R from here", r.rr]);
   L.push(["Candle closes in", left(endOf(r, detail.tf))]);
-  if (r.code) L.push(["Identification", (CODE_NAME[r.code] || r.code) + (r.dir ? (r.dir === 1 ? " · bullish" : " · bearish") : "")], ["Why", r.reason || "–"]);
+  if (r.code) L.push(["Identification", (CODE_NAME[r.code] || r.code) + (r.dir ? (r.dir === 1 ? " · bullish" : " · bearish") : "")], ["State", r.state || "–"], ["Why", r.reason || "–"]);
+  if (r.sigt) L.push(["Signal (C2 closed)", when(cs0.findIndex(c => c[0] === r.sigt))], ["C3 open (entry ref.)", fmt(p, r.entry)]);
   if (SETUP.includes(r.status) && !passes(r)) L.push(["Screener", "hidden by your rules: " + failReasons(r).join(", ")]);
   if (r.q) L.push(["Grade", grade(r) + (r.q.key ? " · " + r.q.key : "")]);
   if (r.q2 && ["formed", "c3close", "forming", "sweeping"].includes(r.status)) L.push(["C2 sweep", r.q2.depth + " pips" + (r.q2.sweep ? " ✓" : " ✗")], ["T-spot (C2 wick 50%)", fmt(p, r.q2.tspot)]);
