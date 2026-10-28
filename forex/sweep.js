@@ -140,6 +140,8 @@ function ltfSetup(sw, c4, m15, openLast) {
   out.rr = tp != null && (tp - entry) * d > 0 && Math.abs(sl - entry) > 0 ? Math.abs(tp - entry) / Math.abs(sl - entry) : null;
   // step 8: walk forward from the candle after the zone exists (the open candle counts: a touch is a touch)
   out.status = "ENTRY_READY";
+  // the sweep is only confirmed when the 4H candle has closed back inside: no fill before that
+  const tConf = j + 1 < c4.length ? c4[j + 1][0] : t4 + H4;
   let filled = false;
   // the zone is only usable once the CHoCH has closed (an FVG can be older than the CHoCH): start after both
   for (let k = Math.max(best.from, b) + 1; k < n; k++) {
@@ -147,9 +149,10 @@ function ltfSetup(sw, c4, m15, openLast) {
     if (!filled) {
       if (t >= tExp) { out.status = "EXPIRED"; break; }
       const touch = d === -1 ? hk >= entry : lk <= entry, stop = d === -1 ? hk > sl : lk < sl;
-      if (tp != null && (d === -1 ? lk <= tp : hk >= tp) && !touch) { out.status = "MISSED"; out.tExit = t; break; }
-      if (stop && !touch) { out.status = "INVALIDATED"; out.tExit = t; break; }
-      if (touch) { filled = true; out.status = "ENTERED"; out.tFill = t; }
+      const fillable = touch && t >= tConf;
+      if (tp != null && (d === -1 ? lk <= tp : hk >= tp) && !fillable) { out.status = "MISSED"; out.tExit = t; break; }
+      if (stop && !fillable) { out.status = "INVALIDATED"; out.tExit = t; break; }
+      if (touch && t >= tConf) { filled = true; out.status = "ENTERED"; out.tFill = t; }
     }
     if (filled) {
       const stop = d === -1 ? hk >= sl : lk <= sl, hit = tp != null && (d === -1 ? lk <= tp : hk >= tp);

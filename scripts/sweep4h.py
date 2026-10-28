@@ -152,6 +152,7 @@ def ltf_setup(sw, c4, m15, open_last=True):
     out["rr"] = (abs(tp - entry) / abs(sl - entry)
                  if tp is not None and (tp - entry) * d > 0 and abs(sl - entry) > 0 else None)
     out["status"] = "ENTRY_READY"
+    tconf = c4[j + 1][0] if j + 1 < len(c4) else t4 + H4      # no fill before the 4H sweep candle has closed
     filled = False
     for k in range(max(best["from"], b) + 1, n):       # zone usable only after the CHoCH closed
         t = m15[k][0]; hk = H(k); lk = L(k)
@@ -160,11 +161,12 @@ def ltf_setup(sw, c4, m15, open_last=True):
                 out["status"] = "EXPIRED"; break
             touch = (hk >= entry) if d == -1 else (lk <= entry)
             stop = (hk > sl) if d == -1 else (lk < sl)
-            if tp is not None and ((lk <= tp) if d == -1 else (hk >= tp)) and not touch:
+            fillable = touch and t >= tconf
+            if tp is not None and ((lk <= tp) if d == -1 else (hk >= tp)) and not fillable:
                 out["status"] = "MISSED"; out["tExit"] = t; break
-            if stop and not touch:
+            if stop and not fillable:
                 out["status"] = "INVALIDATED"; out["tExit"] = t; break
-            if touch:
+            if fillable:
                 filled = True; out["status"] = "ENTERED"; out["tFill"] = t
         if filled:
             stop = (hk >= sl) if d == -1 else (lk <= sl)

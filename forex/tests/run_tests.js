@@ -144,8 +144,8 @@ check("[regression] phone engine loads 1 year of hourly data like the GitHub sca
   }
   check(`[sweep parity] JS = Python at ${X.evals.length} points in time (${n} setups)`, bad === 0, { bad });
   // regression (look-ahead): an entry can only fill after the CHoCH candle and after the zone exists
-  const early = X.evals.flatMap(e => e.res).filter(r => r.tFill != null && (r.tFill <= r.choch.t || r.tFill <= r.zone.t));
-  check("[sweep] no fill before the CHoCH or the entry zone", early.length === 0, early.slice(0, 2));
+  const early = X.evals.flatMap(e => e.res).filter(r => r.tFill != null && (r.tFill <= r.choch.t || r.tFill <= r.zone.t || r.tFill < r.sweep.t + 4 * 3600));
+  check("[sweep] no fill before the CHoCH, the entry zone or the 4H close", early.length === 0, early.slice(0, 2));
 }
 console.log(`JS: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

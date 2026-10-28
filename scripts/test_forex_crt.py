@@ -131,6 +131,7 @@ class Sweep4H(unittest.TestCase):
             for r in e["res"]:
                 if r.get("tFill") is not None:
                     self.assertGreater(r["tFill"], r["choch"]["t"]); self.assertGreater(r["tFill"], r["zone"]["t"])
+                    self.assertGreaterEqual(r["tFill"], r["sweep"]["t"] + 4 * 3600)
 
 
 if __name__ == "__main__":
