@@ -4,6 +4,7 @@
 "use strict";
 const fs = require("fs"), path = require("path");
 global.window = {};
+eval(fs.readFileSync(path.join(__dirname, "..", "sweep.js"), "utf8"));
 eval(fs.readFileSync(path.join(__dirname, "..", "live.js"), "utf8"));
 const F = window.FXLive, T = JSON.parse(fs.readFileSync(path.join(__dirname, "crt_cases.json"), "utf8"));
 let pass = 0, fail = 0;
@@ -113,6 +114,38 @@ check("[regression] phone engine loads 1 year of hourly data like the GitHub sca
     }
   }
   check(`[parity] JS = Python on ${checked} real-data results (${P.evals.length} points in time x 5 timeframes)`, bad === 0, { bad });
+}
+// 4H sweep rules on hand-worked candles (sweep_cases.json; expected values worked out by hand)
+{
+  const SW = window.FXSweep, Z = JSON.parse(fs.readFileSync(path.join(__dirname, "sweep_cases.json"), "utf8"));
+  const sub = (got, exp) => exp === null ? got === null : Object.entries(exp).every(([k, v]) =>
+    v !== null && typeof v === "object" ? sub(got[k], v) : typeof v === "number" ? Math.abs(got[k] - v) < 1e-9 : got[k] === v);
+  for (const c of Z.sweeps) { const g = SW.sweepAt(c.c4, c.j, c.live); check(`[sweep] ${c.name}`, sub(g, c.expect), g); }
+  for (const c of Z.ltf) { const sw = SW.sweepAt(c.c4, c.j, false), g = SW.ltfSetup(sw, c.c4, c.m15, true); check(`[sweep 15m] ${c.name}`, sub(g, c.expect), g); }
+}
+// 4H sweep engine: JS (forex/sweep.js) = Python (scripts/sweep4h.py) on real EURUSD data (sweep_fixture.json)
+{
+  const SW = window.FXSweep, X = JSON.parse(fs.readFileSync(path.join(__dirname, "sweep_fixture.json"), "utf8"));
+  const near = (a, b) => {
+    if (a == null || b == null) return a == null && b == null;
+    if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a));
+    if (typeof a !== "object") return a === b;
+    if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((x, i) => near(x, b[i]));
+    const ks = new Set([...Object.keys(a), ...Object.keys(b)]);
+    return [...ks].every(k => near(a[k], b[k]));
+  };
+  let bad = 0, n = 0;
+  for (const e of X.evals) {
+    const hh = X.h1.filter(b => b[0] <= e.T).map(b => ({ t: b[0], o: b[1], h: b[2], l: b[3], c: b[4] }));
+    const mm = X.m15.filter(b => b[0] <= e.T);
+    const res = SW.scan(F.build(hh)["4H"], mm, X.pip, mm[mm.length - 1][4]);
+    n += res.length;
+    if (!near(JSON.parse(JSON.stringify(res)), e.res)) { bad++; if (bad <= 2) console.log("sweep mismatch at", e.T, JSON.stringify({ js: res, py: e.res }).slice(0, 900)); }
+  }
+  check(`[sweep parity] JS = Python at ${X.evals.length} points in time (${n} setups)`, bad === 0, { bad });
+  // regression (look-ahead): an entry can only fill after the CHoCH candle and after the zone exists
+  const early = X.evals.flatMap(e => e.res).filter(r => r.tFill != null && (r.tFill <= r.choch.t || r.tFill <= r.zone.t));
+  check("[sweep] no fill before the CHoCH or the entry zone", early.length === 0, early.slice(0, 2));
 }
 console.log(`JS: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

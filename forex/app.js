@@ -67,6 +67,7 @@ async function load(force) {
     data = d;
     $("#nearTxt").textContent = Math.round((data.near || .25) * 100) + "%";
     render(); liveStatus();
+    window.FXApp = { data }; window.dispatchEvent(new CustomEvent("fxdata", { detail: data }));   // the 4H Sweep tab listens
   } catch (e) {
     $("#upd").textContent = data ? "Offline – showing last data" : "Couldn’t load prices. Try ↻ later.";
   } finally { busy = false; }

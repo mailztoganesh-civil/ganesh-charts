@@ -15,17 +15,19 @@ States (bullish shown, bearish is the mirror):
 import json, math, os, sys
 from datetime import datetime, timezone
 import pandas as pd
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sweep4h as S  # noqa: E402  ICT 4H sweep engine
 
 PAIRS = [  # (name, yahoo symbol, pip size)
     ("EURUSD", "EURUSD=X", 0.0001), ("GBPUSD", "GBPUSD=X", 0.0001), ("USDJPY", "JPY=X", 0.01),
     ("USDCHF", "CHF=X", 0.0001), ("AUDUSD", "AUDUSD=X", 0.0001), ("NZDUSD", "NZDUSD=X", 0.0001),
     ("USDCAD", "CAD=X", 0.0001), ("EURJPY", "EURJPY=X", 0.01), ("GBPJPY", "GBPJPY=X", 0.01),
     ("EURGBP", "EURGBP=X", 0.0001), ("AUDJPY", "AUDJPY=X", 0.01), ("EURAUD", "EURAUD=X", 0.0001),
-    ("XAUUSD", "GC=F", 0.1),
+    ("XAUUSD", "GC=F", 0.1), ("NAS100", "NQ=F", 1.0), ("US30", "YM=F", 1.0), ("US500", "ES=F", 1.0),   # indices: CME futures
 ]
 NEAR = 0.25          # "anticipated" when within 25% of the previous candle's range
 KEEP = {"1H": 100, "4H": 100, "D": 60, "W": 60, "M": 24}   # candles per timeframe sent to the app
-LTF_KEEP = {"15m": 200, "5m": 150}                    # lower-timeframe candles for the HTF+LTF view
+LTF_KEEP = {"15m": 320, "5m": 150}                    # lower-timeframe candles for the HTF+LTF view
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "forex", "data", "crt.json")
 NY = "America/New_York"
 TFS = {"1H": None, "4H": None, "D": None, "W": None}
@@ -468,6 +470,9 @@ def main(loader=fetch_yahoo):
             elif hasattr(loader, "ltf"):
                 ltf_full = loader.ltf(name)
             add_model1(row, tfs, ltf_full)
+            # ICT 4H sweep setups (scripts/sweep4h.py, same rules as forex/sweep.js)
+            c4 = [[int(t.timestamp()), float(r.Open), float(r.High), float(r.Low), float(r.Close)] for t, r in tfs["4H"].iterrows()]
+            row["sweep"] = S.scan(c4, ltf_full.get("15m") or [], pip, row["price"])
             out["pairs"].append(row)
             print(name, {k: (v["status"], v["dir"]) for k, v in row["tf"].items()})
         except Exception as e:  # keep going if one pair fails

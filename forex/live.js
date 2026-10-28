@@ -9,10 +9,10 @@ const PAIRS = [
   ["USDCHF", "CHF=X", 0.0001], ["AUDUSD", "AUDUSD=X", 0.0001], ["NZDUSD", "NZDUSD=X", 0.0001],
   ["USDCAD", "CAD=X", 0.0001], ["EURJPY", "EURJPY=X", 0.01], ["GBPJPY", "GBPJPY=X", 0.01],
   ["EURGBP", "EURGBP=X", 0.0001], ["AUDJPY", "AUDJPY=X", 0.01], ["EURAUD", "EURAUD=X", 0.0001],
-  ["XAUUSD", "GC=F", 0.1],
+  ["XAUUSD", "GC=F", 0.1], ["NAS100", "NQ=F", 1], ["US30", "YM=F", 1], ["US500", "ES=F", 1],   // indices: CME futures, pip = 1 point
 ];
 const NEAR = 0.25;
-const KEEP = { "1H": 100, "4H": 100, D: 60, W: 60, M: 24 }, LTF_KEEP = { "15m": 200, "5m": 150 };
+const KEEP = { "1H": 100, "4H": 100, D: 60, W: 60, M: 24 }, LTF_KEEP = { "15m": 320, "5m": 150 };
 const TF_HOURS = { "1H": 1, "4H": 4, D: 24, W: 120, M: 0 };
 const LTF_FOR = { M: "D", W: "4H", D: "1H", "4H": "15m", "1H": "5m" };
 const H = 3600, DAY = 86400;
@@ -347,6 +347,8 @@ async function pair(base, [name, ysym, pip]) {
   const toL = a => a.map(b => [b.t, b.o, b.h, b.l, b.c]);
   const ltfFull = { "15m": toL(m15), "5m": toL(m5) };
   addModel1(row, tfs, ltfFull);
+  // ICT 4H sweep setups (forex/sweep.js) on the same 4H candles and the 15m candles
+  if (window.FXSweep) row.sweep = window.FXSweep.scan(tfs["4H"], ltfFull["15m"], pip, row.price);
   row.ltf["15m"] = ltfFull["15m"].slice(-LTF_KEEP["15m"]).map(c => [c[0], round(c[1], dg), round(c[2], dg), round(c[3], dg), round(c[4], dg)]);
   row.ltf["5m"] = ltfFull["5m"].slice(-LTF_KEEP["5m"]).map(c => [c[0], round(c[1], dg), round(c[2], dg), round(c[3], dg), round(c[4], dg)]);
   return row;

@@ -100,5 +100,38 @@ class Parity(unittest.TestCase):
             self.assertEqual(got, e["tf"], f"evaluation ending at bar {e['end']}")
 
 
+class Sweep4H(unittest.TestCase):
+    """ICT 4H sweep engine (scripts/sweep4h.py): hand-worked cases and parity with forex/sweep.js."""
+    def sub(self, got, exp, where):
+        if exp is None:
+            self.assertIsNone(got, where); return
+        for k, v in exp.items():
+            if isinstance(v, dict):
+                self.sub(got[k], v, where + "." + k)
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                self.assertAlmostEqual(got[k], v, places=9, msg=where + "." + k)
+            else:
+                self.assertEqual(got[k], v, where + "." + k)
+
+    def test_hand_cases(self):
+        import sweep4h as S
+        Z = json.load(open(os.path.join(HERE, "..", "forex", "tests", "sweep_cases.json")))
+        for c in Z["sweeps"]:
+            self.sub(S.sweep_at(c["c4"], c["j"], c["live"]), c["expect"], c["name"])
+        for c in Z["ltf"]:
+            sw = S.sweep_at(c["c4"], c["j"], False)
+            self.sub(S.ltf_setup(sw, c["c4"], c["m15"], True), c["expect"], c["name"])
+
+    def test_parity_fixture(self):
+        import make_sweep_fixture as M
+        X = json.load(open(os.path.join(HERE, "..", "forex", "tests", "sweep_fixture.json")))
+        for e in X["evals"][::6] + X["evals"][-1:]:
+            self.assertEqual(json.loads(json.dumps(M.scan_at(X["h1"], X["m15"], e["T"]))), e["res"], f"T={e['T']}")
+        for e in X["evals"]:                       # regression: no fill before the CHoCH / zone (look-ahead)
+            for r in e["res"]:
+                if r.get("tFill") is not None:
+                    self.assertGreater(r["tFill"], r["choch"]["t"]); self.assertGreater(r["tFill"], r["zone"]["t"])
+
+
 if __name__ == "__main__":
     unittest.main()

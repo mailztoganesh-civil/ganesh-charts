@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Forex CRT">
 <link rel="manifest" href="manifest.json">
+<script>try { const m = JSON.parse(localStorage.getItem("fx-theme") || '"dark"'); if (m !== "auto") document.documentElement.dataset.theme = m; } catch (e) {}</script>
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
 <style>
@@ -86,6 +87,21 @@
   .lv div { background:var(--tint); border-radius:10px; padding:8px 10px; font-size:12px; color:var(--sec); }
   .lv b { display:block; color:var(--ink); font-size:15px; font-variant-numeric:tabular-nums; }
   .legend { font-size:12px; color:var(--sec); line-height:1.5; }
+  .fl { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+  .fl label { display:grid; gap:4px; font-size:13px; color:var(--ink2); font-weight:600; }
+  .fl input, .fl select { padding:8px 10px; border:1px solid var(--line); border-radius:10px; background:var(--tint); color:var(--ink); font:inherit; font-size:14px; min-width:0; }
+  .tbl { width:100%; border-collapse:collapse; font-size:13px; }
+  .tbl th { text-align:left; color:var(--sec); font-size:11px; font-weight:700; padding:4px 6px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  .tbl td { padding:8px 6px; border-bottom:1px solid var(--line); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .tbl tr[data-sw] { cursor:pointer; }
+  .tbl tr[data-sw]:active td { background:var(--tint); }
+  .tbl td:first-child { font-weight:800; }
+  .st { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:800; background:var(--nsoft); color:var(--ink2); }
+  .st-ENTRY_READY { background:var(--blue); color:#fff; } .st-ENTERED { background:var(--green); color:#fff; }
+  .st-CHOCH { background:var(--gsoft); color:var(--green); } .st-SWEEP, .st-SWEEPING { background:var(--asoft); color:var(--amber); }
+  .st-TARGET_HIT { color:var(--green); background:transparent; } .st-STOPPED, .st-INVALIDATED, .st-MISSED, .st-EXPIRED { color:var(--sec); background:transparent; }
+  .crtok { color:var(--green); font-weight:800; }
+  @media (max-width:520px) { .tbl .muted { display:none; } .tbl td, .tbl th { padding-left:4px; padding-right:4px; } }
   button { cursor:pointer; font-family:inherit; }
   button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
 </style>
@@ -94,9 +110,12 @@
 <header>
   <h1>Forex CRT</h1>
   <div class="upd" id="upd">Loading…</div>
+  <button id="theme" type="button" aria-label="Theme">◐</button>
   <button id="refresh" type="button" aria-label="Refresh">↻</button>
 </header>
 <main>
+  <div class="seg two" id="appTab" role="tablist" aria-label="Screener"><button data-tab="crt" class="on">CRT</button><button data-tab="sweep">ICT 4H Sweep</button></div>
+  <div id="crtView" style="display:grid;gap:12px;min-width:0">
   <div class="seg" id="tfSeg" role="tablist" aria-label="Timeframe">
     <button data-tf="1H">1H</button><button data-tf="4H" class="on">4H</button><button data-tf="D">Daily</button><button data-tf="W">Weekly</button><button data-tf="M">Monthly</button>
   </div>
@@ -141,8 +160,53 @@
     <b>C3 closure</b> – C2 swept but closed outside C1; C3 then closed back through C2’s open, so C4 is the expected continuation.<br>
     <b>Model-1</b> – on the lower timeframe (Monthly→Daily, Weekly→4H, Daily→1H, 4H→15m, 1H→5m): after the sweep, the opening price of the last opposite candle (or candle series) before the sweep extreme. A close back through it is the entry; stop beyond the sweep, target the other side of the CRT range. When that candle is mostly wick, its high/low is used instead.<br>
     <b>Anticipated</b> – no sweep yet, price is within <span id="nearTxt">25%</span> of the previous candle's high/low.<br>
-    Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Live prices refresh every minute through your Cloudflare Worker; the GitHub scan is the backup. Gold uses COMEX gold futures.
+    Candles follow New York forex time: days start 17:00 NY, 4H blocks at 1-5-9. Live prices refresh every minute through your Cloudflare Worker; the GitHub scan is the backup. Gold uses COMEX gold futures; NAS100, US30 and US500 use the CME index futures (NQ, YM, ES).
   </section>
+  </div>
+  <div id="swView" hidden style="display:grid;gap:12px;min-width:0">
+    <div class="chips" id="swChips" aria-label="Status filter"></div>
+    <div class="chips" id="swDir" aria-label="Direction filter">
+      <button class="chip on" data-dir="0">Both</button><button class="chip" data-dir="1">▲ Bullish</button><button class="chip" data-dir="-1">▼ Bearish</button>
+    </div>
+    <div class="muted" id="swNote"></div>
+    <section class="card" id="swBull"></section>
+    <section class="card" id="swBear"></section>
+    <section class="card">
+      <h2>Filters</h2>
+      <div class="fl">
+        <label>Min sweep strength <span class="muted">× 4H ATR</span><input type="number" id="fSweep" step="0.05" min="0"></label>
+        <label>Min displacement <span class="muted">× 15m ATR</span><input type="number" id="fDisp" step="0.1" min="0"></label>
+        <label>Min 4H swing size <span class="muted">× 4H ATR</span><input type="number" id="fSwing" step="0.1" min="0"></label>
+        <label>Quality<select id="fGrade"><option value="C">All</option><option value="B">A and B</option><option value="A">A only</option></select></label>
+      </div>
+      <label class="rl"><input type="checkbox" id="fCrt"> <span><b>Only with CRT confluence</b> – the 4H or 1H CRT on the same pair points the same way (formed, forming, sweeping or C3 closure)</span></label>
+      <label class="rl"><input type="checkbox" id="fFinished"> <span>Also show finished setups (target hit, stopped, invalidated, missed, expired)</span></label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px"><button class="chip" id="swCsv" type="button">⬇ Export CSV</button><button class="chip" id="swReset" type="button">Reset filters</button></div>
+    </section>
+    <section class="card">
+      <h2>Telegram alerts (optional)</h2>
+      <div class="muted">Sends a message when a setup becomes <b>Entry ready</b>, while this app is open. Make a bot with @BotFather, send it any message, then put its token and your chat id here. They are saved on this device only.</div>
+      <div class="fl" style="margin-top:8px">
+        <label>Bot token<input id="tgToken" autocomplete="off" placeholder="123456:ABC…"></label>
+        <label>Chat id<input id="tgChat" autocomplete="off" placeholder="123456789"></label>
+      </div>
+      <label class="rl"><input type="checkbox" id="tgOn"> <span>Send alerts</span></label>
+      <div style="display:flex;gap:8px"><button class="chip on" id="tgSave" type="button">Save</button><button class="chip" id="tgTest" type="button">Send test</button></div>
+      <div class="muted" id="tgState"></div>
+    </section>
+    <section class="card legend">
+      <b>How a setup is found</b> (same rules on the phone and in the GitHub scan)<br>
+      <b>1. 4H swing</b> – a 4H candle whose high is above the 2 candles before it and not below the 2 after it (lows mirrored); known once those 2 candles closed. Size = swing high minus the lowest low of those 5 candles, in 4H ATR(14).<br>
+      <b>2. Sweep</b> – a 4H candle trades beyond an untouched swing from the last 60 4H candles (equal = touch, not a sweep). If it takes several, the furthest counts; taking a high and a low together is skipped as ambiguous. Strength = distance beyond the level in 4H ATR.<br>
+      <b>3. Back into range</b> – the sweep candle must close back inside the level. While it is still open the setup is only <i>Sweeping</i>; closing beyond is a break, not a sweep.<br>
+      <b>4. Target</b> – the nearest untouched 4H swing on the other side (opposite liquidity), else the 20-candle extreme.<br>
+      <b>5. 15m CHoCH</b> – after price went beyond the 4H level, the first 15m candle that closes through the last 15m swing low (bearish) / swing high (bullish) made before the sweep extreme.<br>
+      <b>6. Displacement</b> – the biggest 15m body from the extreme to the CHoCH, in 15m ATR(14).<br>
+      <b>7. Entry zone</b> – the 15m FVG in that move (made by the biggest candle, at least 0.1 × ATR), else the order block (last opposite candle before the extreme). Entry = near edge of the zone, stop = sweep extreme, target = step 4.<br>
+      <b>8. Status</b> – Sweeping → Sweep only → CHoCH → Entry ready → In trade → Target hit / Stopped. Before entry: Invalidated (beyond the stop), Missed (target first) or Expired (6 4H candles after the sweep).<br>
+      <b>Grade</b> – one point each: swing ≥ 1.5 ATR, sweep 0.1–1.0 ATR, displacement ≥ 1.5 ATR, FVG zone, R:R ≥ 2. A = 4–5, B = 3, C = 0–2. Filters only hide setups; they never change what was detected.
+    </section>
+  </div>
 </main>
 
 <div class="sheet" id="sheet" hidden>
@@ -158,8 +222,22 @@
     <div class="muted" id="dNote"></div>
   </div>
 </div>
-<script src="live.js?v=13"></script>
-<script src="app.js?v=13"></script>
+<div class="sheet" id="swSheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="swTitle">
+    <div class="hd"><h3 id="swTitle">EURUSD</h3><span class="badge" id="swBadge"></span><button class="x" id="swClose" type="button">Close</button></div>
+    <div class="charts two">
+      <div><div class="cap">4H – swing, sweep, back into range, target</div><canvas id="swCv1" aria-label="4H chart"></canvas></div>
+      <div><div class="cap">15m – CHoCH, displacement, entry zone</div><canvas id="swCv2" aria-label="15 minute chart"></canvas></div>
+    </div>
+    <div class="q" id="swChecks"></div>
+    <div class="lv" id="swLv"></div>
+    <div class="muted" id="swWhy"></div>
+  </div>
+</div>
+<script src="sweep.js?v=14"></script>
+<script src="live.js?v=14"></script>
+<script src="app.js?v=14"></script>
+<script src="sweep-ui.js?v=14"></script>
 <script>
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 </script>

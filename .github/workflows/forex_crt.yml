@@ -9,6 +9,9 @@ on:
       - "scripts/forex_crt.py"
       - "scripts/test_forex_crt.py"
       - "scripts/make_parity_fixture.py"
+      - "scripts/sweep4h.py"
+      - "scripts/make_sweep_fixture.py"
+      - "forex/sweep.js"
       - "forex/live.js"
       - "forex/tests/**"
   schedule:
